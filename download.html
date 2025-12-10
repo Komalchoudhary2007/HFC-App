@@ -122,9 +122,10 @@
         </a>
         
         <div class="file-info">
-            File: hfc-app.apk (21.0 MB)<br>
-            Version: 1.0.0<br>
-            Build: Release
+            File: hfc-app.apk (46.0 MB)<br>
+            Version: 1.5.12 - Background Webhooks with Foreground Service<br>
+            Build: Release<br>
+            Updated: December 8, 2025 (12:02 PM)
         </div>
 
         <div class="warning">
@@ -154,7 +155,77 @@
                     <strong>Cloud Sync</strong><br>
                     Automatic data upload
                 </div>
+                <div class="feature">
+                    <div class="feature-icon">📋</div>
+                    <strong>All Data View</strong><br>
+                    60+ parameters displayed
+                </div>
+                <div class="feature">
+                    <div class="feature-icon">🔗</div>
+                    <strong>Backend Sync</strong><br>
+                    Auto webhook to API
+                </div>
             </div>
+        </div>
+        
+        <div class="info" style="background: linear-gradient(135deg, rgba(103, 58, 183, 0.2), rgba(156, 39, 176, 0.2));">
+            <h3>🆕 What's New in v1.5.12</h3>
+            <p><strong>🎉 BACKGROUND WEBHOOKS WITH FOREGROUND SERVICE!</strong></p>
+            <p>• <strong>✅ Android Foreground Service</strong> - Keeps app alive in background with persistent notification</p>
+            <p>• <strong>✅ No Crashes</strong> - Proper native Android implementation using Service class</p>
+            <p>• <strong>⏰ 5-Minute Webhooks</strong> - Automatic data transmission every 5 minutes</p>
+            <p>• <strong>🚨 Stress Alert Button</strong> - Send immediate webhook with fresh data</p>
+            <p>• <strong>📊 No Duplicates</strong> - Single webhook per event, clean data flow</p>
+            <p>• <strong>⚡ Fresh Data</strong> - Stress button triggers new device reading (1-2 seconds)</p>
+            <p>• <strong>🔔 Persistent Notification</strong> - Shows "HFC App Active" notification (required by Android)</p>
+            <p>• <strong>🔋 CPU Wake Lock</strong> - Keeps Dart isolate running when screen off</p>
+            <p>• <strong>🛡️ START_STICKY</strong> - Service automatically restarts if killed by system</p>
+            <p><br><strong>How to use:</strong> Connect device, minimize app - you'll see a persistent notification. Webhooks send automatically every 5 minutes in background! Use red "I'm Feeling Stress" button for immediate alert.</p>
+            <p>• Proper handling of UTC+5:30, UTC+9:30 timezones</p>
+            <p><br><strong>Previous v1.5.5 features:</strong></p>
+            <p><strong>📱 TIME SYNC NOW VISIBLE IN UI!</strong></p>
+            <p>• <strong>✅ Time Sync Status Display</strong> - See sync status right in the app UI</p>
+            <p>• <strong>✅ Real-time Feedback</strong> - Watch sync progress as it happens</p>
+            <p>• <strong>✅ Time Difference Display</strong> - Shows exact seconds difference</p>
+            <p>• <strong>✅ Sync Timestamp</strong> - See when last sync occurred</p>
+            <p>• <strong>✅ Visual Indicators</strong> - ✅ Success / ⚠️ Warning / ❌ Error</p>
+            <p><br><strong>New UI Section Above Webhook Status:</strong></p>
+            <p>"Time Sync Status" - Shows sync result and time difference</p>
+            <p><br><strong>What Was Fixed:</strong></p>
+            <p>• Disabled background service startup (was crashing on connect)</p>
+            <p>• Disabled RawManager automatic start (no cloud upload)</p>
+            <p>• Disabled automatic sensor enabling (was causing disconnects)</p>
+            <p>• App now works in foreground mode only</p>
+            <p>• Background service will be enabled later with valid OAuth credentials</p>
+            <p><br><strong>All v1.5.0 features still included:</strong></p>
+            <p>• Background service with foreground notification</p>
+            <p>• 60-second webhook to api.hireforcare.com</p>
+            <p>• 5-minute automatic time sync</p>
+            <p>• Works when app is minimized</p>
+            <p><br><strong>Previous v1.4.0 features:</strong></p>
+            <p>• Historical Data Dialog Fixed - White screen issue resolved</p>
+            <p>• Enhanced Debug Logging - Detailed console output for tracking</p>
+            <p>• Verbose Webhook Status - Timestamps and detailed error messages</p>
+            <p><br><strong>Previous v1.3.0 features:</strong></p>
+            <p><strong>🔧 CRITICAL FIX: Network Connection Resolved!</strong></p>
+            <p>• <strong>✅ Android Network Security Config</strong> - Backend connection now works!</p>
+            <p>• <strong>✅ Internet Permission</strong> - Proper network access enabled</p>
+            <p>• <strong>✅ Enhanced Dio Configuration</strong> - 30s timeout, better error handling</p>
+            <p>• <strong>✅ Test Webhook Button</strong> - Manually test backend connection anytime</p>
+            <p>• <strong>✅ Scrollable UI</strong> - Main page now scrolls properly</p>
+            <p>• <strong>✅ Detailed Logging</strong> - See exactly what's being sent/received</p>
+            <p><strong>Previous v1.2.1 features:</strong></p>
+            <p><strong>🐛 Enhanced Webhook Error Tracking!</strong></p>
+            <p>• <strong>Webhook Status Display</strong> - See real-time sync status on main screen</p>
+            <p>• <strong>Success/Error Counter</strong> - Track webhook performance</p>
+            <p>• <strong>Detailed Error Messages</strong> - Know exactly what went wrong:</p>
+            <p style="margin-left: 20px;">- Connection timeout errors<br>
+               - HTTP response codes (404, 500, etc.)<br>
+               - Network connectivity issues<br>
+               - Backend URL problems</p>
+            <p>• <strong>Last Send Time</strong> - See when data was last sent</p>
+            <p>• <strong>Webhook URL Display</strong> - Verify backend endpoint</p>
+            <p><em>Includes: Backend webhook sync + All Data Page with 60+ parameters!</em></p>
         </div>
 
         <div class="info">

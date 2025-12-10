@@ -1,7 +1,27 @@
-# HFC App Development Documentation
+# HFC-Nitto Wearable App Documentation
 
-## Project Overview
-This is a Flutter mobile application project called HFC App. The project was created as a cross-platform mobile application using Flutter framework.
+Complete documentation for the HFC-Nitto stress management system for special needs parents.
+
+## 📚 Documentation Index
+
+### Start Here First! 👇
+1. **[QUICK_START.md](./QUICK_START.md)** - **READ THIS FIRST!**
+   - Architecture overview
+   - Why backend-heavy approach is correct
+   - Development phases summary
+   - Immediate next steps
+
+### Complete Implementation Guides
+2. **[DEVELOPMENT_ROADMAP.md](./DEVELOPMENT_ROADMAP.md)** - Detailed 11-week development plan
+3. **[API_DOCUMENTATION.md](./API_DOCUMENTATION.md)** - Complete REST API reference
+4. **[MOBILE_APP_GUIDE.md](./MOBILE_APP_GUIDE.md)** - Step-by-step Flutter implementation
+5. **[POC_IMPLEMENTATION.md](./POC_IMPLEMENTATION.md)** - POC-specific requirements
+
+---
+
+## 🎯 Project Overview
+
+This is a Flutter mobile application integrated with Nitto's HC20 wearable device for the **7-month Proof of Concept study** to help parents of special needs children manage stress through continuous monitoring and psychologist-led interventions.
 
 ## Development Process
 

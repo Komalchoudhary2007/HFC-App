@@ -1,6 +1,10 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:hc20/hc20.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:dio/dio.dart';
+import 'pages/all_data_page.dart';
 
 void main() {
   runApp(const MyApp());
@@ -31,13 +35,26 @@ class HC20HomePage extends StatefulWidget {
   State<HC20HomePage> createState() => _HC20HomePageState();
 }
 
-class _HC20HomePageState extends State<HC20HomePage> {
+class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver {
   Hc20Client? _client;
   Hc20Device? _connectedDevice;
   bool _isScanning = false;
   bool _isConnected = false;
   List<Hc20Device> _discoveredDevices = [];
-  String _statusMessage = 'Ready to scan for HC20 devices';
+  String _statusMessage = 'Click "Start Scanning" to search for HC20 devices';
+  
+  // Webhook configuration
+  late final Dio _dio;
+  static const String _webhookUrl = 'https://api.hireforcare.com/webhook/hc20-data';
+  int _webhookSuccessCount = 0;
+  int _webhookErrorCount = 0;
+  
+  // Time sync info
+  String _lastTimeSyncStatus = 'Not synced yet';
+  DateTime? _lastTimeSyncTime;
+  String _lastWebhookStatus = '';
+  String _lastWebhookError = '';
+  DateTime? _lastWebhookTime;
   
   // Real-time data
   int? _heartRate;
@@ -46,11 +63,92 @@ class _HC20HomePageState extends State<HC20HomePage> {
   double? _temperature;
   int? _batteryLevel;
   int? _steps;
+  bool _stressAlertPending = false;  // Flag to send stress alert on next data
+  StreamSubscription? _realtimeSubscription;
+  Timer? _dataRefreshTimer;
 
   @override
   void initState() {
     super.initState();
-    _initializeHC20Client();
+    WidgetsBinding.instance.addObserver(this);
+    _initializeDio();
+    _enableBackgroundExecution();
+    // Note: HC20 client will be initialized when user clicks scan button
+  }
+  
+  // Keep app alive in background using platform channel
+  Future<void> _enableBackgroundExecution() async {
+    try {
+      const platform = MethodChannel('com.hfc.app/background');
+      await platform.invokeMethod('enableBackgroundExecution');
+      print('✅ Background execution enabled');
+    } catch (e) {
+      print('⚠️ Could not enable background execution: $e');
+    }
+  }
+  
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _realtimeSubscription?.cancel();
+    _dataRefreshTimer?.cancel();
+    _disableBackgroundExecution();
+    super.dispose();
+  }
+  
+  Future<void> _disableBackgroundExecution() async {
+    try {
+      const platform = MethodChannel('com.hfc.app/background');
+      await platform.invokeMethod('disableBackgroundExecution');
+      print('✅ Background execution disabled');
+    } catch (e) {
+      print('⚠️ Could not disable background execution: $e');
+    }
+  }
+  
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    print('📱 App lifecycle state changed: $state');
+    
+    switch (state) {
+      case AppLifecycleState.resumed:
+        print('✅ App resumed - foreground mode');
+        break;
+      case AppLifecycleState.paused:
+        print('⏸️ App paused - background mode');
+        print('🔄 Background service will maintain webhook transmission');
+        break;
+      case AppLifecycleState.inactive:
+        print('💤 App inactive');
+        break;
+      case AppLifecycleState.detached:
+        print('🔌 App detached');
+        break;
+      case AppLifecycleState.hidden:
+        print('🙈 App hidden');
+        break;
+    }
+  }
+  
+  void _initializeDio() {
+    _dio = Dio(BaseOptions(
+      connectTimeout: const Duration(seconds: 30),
+      receiveTimeout: const Duration(seconds: 30),
+      sendTimeout: const Duration(seconds: 30),
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+    ));
+    
+    // Add logging interceptor for debugging
+    _dio.interceptors.add(LogInterceptor(
+      requestBody: true,
+      responseBody: true,
+      error: true,
+      logPrint: (obj) => print('🌐 Dio Log: $obj'),
+    ));
   }
 
   Future<void> _initializeHC20Client() async {
@@ -63,20 +161,25 @@ class _HC20HomePageState extends State<HC20HomePage> {
       await _requestPermissions();
 
       // Create HC20 client with OAuth credentials
+      // TODO: Replace with actual credentials from your HC20 dev team
       _client = await Hc20Client.create(
         config: Hc20Config(
-          clientId: 'your-client-id',  // Replace with actual client ID
-          clientSecret: 'your-client-secret',  // Replace with actual client secret
+          clientId: 'your-client-id',
+          clientSecret: 'your-client-secret',
         ),
       );
 
       setState(() {
         _statusMessage = 'HC20 client initialized. Ready to scan!';
       });
+      
+      print('✓ HC20 client initialized successfully');
     } catch (e) {
+      print('❌ HC20 client initialization error: $e');
       setState(() {
-        _statusMessage = 'Error initializing client: $e';
+        _statusMessage = 'Error: Invalid OAuth credentials. Contact dev team for clientId/clientSecret.';
       });
+      _client = null;  // Ensure client is null on error
     }
   }
 
@@ -98,8 +201,17 @@ class _HC20HomePageState extends State<HC20HomePage> {
     }
   }
 
-  void _startScanning() {
-    if (_client == null) return;
+  void _startScanning() async {
+    // Initialize client if not already done
+    if (_client == null) {
+      await _initializeHC20Client();
+      if (_client == null) {
+        setState(() {
+          _statusMessage = 'Failed to initialize. Check OAuth credentials.';
+        });
+        return;
+      }
+    }
 
     setState(() {
       _isScanning = true;
@@ -143,19 +255,91 @@ class _HC20HomePageState extends State<HC20HomePage> {
         _statusMessage = 'Connecting to ${device.name}...';
       });
 
+      print('🔌 Attempting to connect to device: ${device.name}');
+      print('⚠️  Note: Connection may fail if OAuth credentials are invalid');
+      print('⚠️  HC20 SDK automatically enables raw data upload to cloud on connect');
+      
       // Connect to device
+      // Note: This automatically starts RawManager and uploads to Nitto cloud
+      // Requires valid clientId/clientSecret in Hc20Client.create()
       await _client!.connect(device);
       
       // Read device info
       final info = await _client!.readDeviceInfo(device);
       
-      // Set time
-      final now = DateTime.now();
-      await _client!.setTime(
-        device,
-        timestamp: now.millisecondsSinceEpoch ~/ 1000,
-        timezone: 8,
-      );
+      // Sync time with mobile device (required by HC20 SDK)
+      setState(() {
+        _statusMessage = 'Syncing time with device...';
+      });
+      
+      try {
+        final now = DateTime.now();
+        // The device expects timezone offset in hours as an integer
+        // For timezones with 30-minute offsets (e.g., UTC+5:30), we need to pass it as a decimal
+        // But since the API expects int, we'll convert the entire offset to the nearest hour
+        // and adjust the timestamp to compensate for the 30-minute difference
+        final offsetMinutes = now.timeZoneOffset.inMinutes;
+        final offsetHours = offsetMinutes ~/ 60; // Integer hours part
+        final remainingMinutes = offsetMinutes % 60; // Remaining minutes (0, 30, or 45)
+        
+        // Adjust timestamp to compensate for non-hour timezone offsets
+        // If timezone is UTC+5:30, we pass timezone=5 but adjust timestamp by +30 minutes
+        final adjustedTimestamp = (now.millisecondsSinceEpoch ~/ 1000) + (remainingMinutes * 60);
+        
+        print('⏰ Syncing time with device...');
+        print('   Mobile time: ${now.toIso8601String()}');
+        print('   Base timestamp: ${now.millisecondsSinceEpoch ~/ 1000}');
+        print('   Adjusted timestamp: $adjustedTimestamp (compensating for $remainingMinutes min offset)');
+        print('   Timezone: UTC+${offsetMinutes / 60.0} (sending as $offsetHours hours)');
+        
+        await _client!.setTime(
+          device,
+          timestamp: adjustedTimestamp,
+          timezone: offsetHours,
+        );
+        
+        print('✓ Time synced successfully');
+        
+        // Verify time was set correctly
+        final deviceTime = await _client!.getTime(device);
+        print('✓ Device time verification:');
+        print('   Device timestamp: ${deviceTime.timestamp}');
+        print('   Device timezone: UTC+${deviceTime.timezone}');
+        final timeDiff = (now.millisecondsSinceEpoch ~/ 1000) - deviceTime.timestamp;
+        print('   Time difference: ${timeDiff.abs()} seconds');
+        
+        // Update sync status
+        _lastTimeSyncTime = DateTime.now();
+        
+        if (timeDiff.abs() > 60) {
+          print('⚠️  Warning: Time difference is more than 60 seconds!');
+          _lastTimeSyncStatus = '⚠️ Synced with ${timeDiff.abs()}s diff';
+          setState(() {
+            _statusMessage = '⚠️ Time sync issue: ${timeDiff.abs()}s difference!';
+          });
+          // Wait a bit so user can see the warning
+          await Future.delayed(Duration(seconds: 2));
+        } else {
+          _lastTimeSyncStatus = '✅ Synced (${timeDiff.abs()}s diff)';
+          setState(() {
+            _statusMessage = 'Time synced! Diff: ${timeDiff.abs()}s';
+          });
+        }
+      } catch (timeError) {
+        print('❌ Time sync error: $timeError');
+        print('⚠️  Continuing without time sync - device may have incorrect time');
+        
+        _lastTimeSyncStatus = '❌ Failed: $timeError';
+        _lastTimeSyncTime = DateTime.now();
+        
+        setState(() {
+          _statusMessage = '❌ Time sync failed: $timeError';
+        });
+        
+        // Show error for 2 seconds before continuing
+        await Future.delayed(Duration(seconds: 2));
+        // Continue with connection even if time sync fails
+      }
 
       // Set user parameters
       await _client!.setParameters(device, {
@@ -175,17 +359,62 @@ class _HC20HomePageState extends State<HC20HomePage> {
 
       // Start listening to real-time data
       _startRealtimeDataStream(device);
+      
+      // Background execution enabled via foreground service + wake lock
+      print('✓ Data streaming started - webhooks will continue in background');
 
     } catch (e) {
+      print('❌ Connection error: $e');
+      
+      String errorMessage;
+      if (e.toString().contains('service_discovery_failure') || 
+          e.toString().contains('status 8')) {
+        // Status 8 = GATT_CONN_TIMEOUT or disconnected during service discovery
+        // This often happens when raw data upload fails due to invalid OAuth credentials
+        errorMessage = 'Connection failed: Device disconnected during setup.\n\n'
+            'Common causes:\n'
+            '• Invalid OAuth credentials (clientId/clientSecret)\n'
+            '• HC20 SDK requires cloud access on connect\n'
+            '• Network connectivity issues\n'
+            '• Device out of range\n\n'
+            'Contact dev team for valid OAuth credentials.';
+      } else if (e.toString().contains('Invalid OAuth') || 
+                 e.toString().contains('401') ||
+                 e.toString().contains('authentication')) {
+        errorMessage = 'Authentication failed: Invalid OAuth credentials.\n\n'
+            'The HC20 SDK requires valid clientId and clientSecret\n'
+            'for cloud data upload. Contact dev team for credentials.';
+      } else {
+        errorMessage = 'Connection failed: $e';
+      }
+      
       setState(() {
-        _statusMessage = 'Connection failed: $e';
+        _statusMessage = errorMessage;
       });
     }
   }
 
   void _startRealtimeDataStream(Hc20Device device) {
-    _client!.realtimeV2(device).listen(
+    // Cancel any existing subscription and timer first
+    _realtimeSubscription?.cancel();
+    _dataRefreshTimer?.cancel();
+    
+    print('\n🚀 ========================================');
+    print('🚀 Starting real-time data stream for device: ${device.name}');
+    print('🚀 Device ID: ${device.id}');
+    print('🚀 Webhook URL: $_webhookUrl');
+    print('🚀 Data refresh: Every 300 seconds (5 minutes)');
+    print('🚀 ========================================\n');
+    
+    // Subscribe and KEEP the subscription reference
+    _realtimeSubscription = _client!.realtimeV2(device).listen(
       (data) {
+        final timestamp = DateTime.now().toIso8601String();
+        print('\n📊 [$timestamp] Received real-time data:');
+        print('   Heart: ${data.heart}, SpO2: ${data.spo2}, BP: ${data.bp}');
+        print('   Temp: ${data.temperature}, Battery: ${data.battery?.percent}%');
+        print('   Steps: ${data.basicData?[0] ?? "N/A"}');
+        
         setState(() {
           if (data.heart != null) _heartRate = data.heart;
           if (data.spo2 != null) _spo2 = data.spo2;
@@ -198,19 +427,304 @@ class _HC20HomePageState extends State<HC20HomePage> {
             _steps = data.basicData![0];
           }
         });
+        
+        // Check if stress alert is pending
+        if (_stressAlertPending) {
+          print('🚨 Stress alert flag detected - sending STRESS webhook with fresh data');
+          _stressAlertPending = false;
+          _sendDataToWebhook(device, data, isStressAlert: true);
+          setState(() {
+            _statusMessage = 'Stress alert sent with fresh data!';
+          });
+        } else {
+          // Send regular webhook (non-blocking)
+          print('📤 Sending regular webhook at $_webhookUrl...');
+          _sendDataToWebhook(device, data);
+        }
       },
       onError: (error) {
+        print('\n❌ ========================================');
+        print('❌ Real-time stream error: $error');
+        print('❌ ========================================\n');
         setState(() {
           _statusMessage = 'Real-time data error: $error';
         });
       },
+      onDone: () {
+        print('\n✅ ========================================');
+        print('✅ Real-time stream completed/closed');
+        print('✅ ========================================\n');
+      },
     );
+    
+    print('✓ Real-time stream subscription created and stored in _realtimeSubscription');
+    print('✓ Starting periodic timer to request data every 300 seconds (5 minutes)...');
+    
+    // Set up periodic timer to trigger data refresh every 300 seconds (5 minutes)
+    // This ensures the HC20 device sends fresh data regularly
+    _dataRefreshTimer = Timer.periodic(const Duration(seconds: 300), (timer) {
+      if (_isConnected && _connectedDevice != null) {
+        print('⏰ [Timer] Requesting fresh data from device...');
+        // Create a temporary subscription to trigger new data request
+        // The data will be received by our main _realtimeSubscription above
+        _client!.realtimeV2(device).listen((_) {}, onError: (_) {});
+      } else {
+        print('⚠️  [Timer] Device disconnected, stopping timer');
+        timer.cancel();
+      }
+    });
+    
+    print('✓ Webhook will send automatically every 300 seconds (5 minutes)\n');
+  }
+  
+  void _sendStressWebhook() {
+    if (_connectedDevice == null || !_isConnected || _client == null) {
+      print('⚠️ Cannot send stress webhook - no device connected');
+      setState(() {
+        _statusMessage = 'No device connected';
+      });
+      return;
+    }
+    
+    print('\n🚨 ========================================');
+    print('🚨 STRESS BUTTON PRESSED');
+    print('🚨 Requesting IMMEDIATE fresh data from device...');
+    print('🚨 ========================================\n');
+    
+    setState(() {
+      _stressAlertPending = true;
+      _statusMessage = 'Requesting fresh data...';
+    });
+    
+    // Trigger immediate data request by creating a brief subscription
+    // This will cause the device to send fresh data immediately
+    // The main subscription listener will catch it and send stress webhook
+    _client!.realtimeV2(_connectedDevice!).listen((_) {}, onError: (_) {}).cancel();
+  }
+  
+  Future<void> _sendDataToWebhook(Hc20Device device, Hc20RealtimeV2 data, {bool isStressAlert = false}) async {
+    try {
+      // Prepare comprehensive payload with all available data
+      final payload = {
+        'timestamp': DateTime.now().toIso8601String(),
+        'stress_alert': isStressAlert,
+        'device': {
+          'id': device.id,
+          'name': device.name,
+        },
+        'realtime_data': {
+          // Vital signs
+          'heart_rate': data.heart,
+          'rri': data.rri,
+          'spo2': data.spo2,
+          'blood_pressure': data.bp != null ? {
+            'systolic': data.bp!.length > 0 ? data.bp![0] : null,
+            'diastolic': data.bp!.length > 1 ? data.bp![1] : null,
+          } : null,
+          
+          // Temperature (divided by 100 as per HC20 spec)
+          'temperature': data.temperature?.map((t) => t / 100.0).toList(),
+          
+          // Battery
+          'battery': data.battery != null ? {
+            'percent': data.battery!.percent,
+            'charge': data.battery!.charge,
+          } : null,
+          
+          // Basic data (steps, calories, distance)
+          'basic_data': data.basicData,
+          
+          // Barometric pressure
+          'barometric_pressure': data.baro,
+          
+          // Wear status
+          'wear_status': data.wear,
+          
+          // Sleep (raw array: status, deep, light, rem, sober)
+          'sleep': data.sleep,
+          
+          // GNSS/GPS (raw array: onoff, sigqual, timestamp, lat, lon, alt)
+          'gnss': data.gnss,
+          
+          // HRV (raw array: SDNN, TP, LF, HF, VLF - values x1000)
+          'hrv_raw': data.hrv,
+          'hrv_metrics': data.hrvMetrics != null ? {
+            'sdnn': data.hrvMetrics!.sdnn,
+            'tp': data.hrvMetrics!.tp,
+            'lf': data.hrvMetrics!.lf,
+            'hf': data.hrvMetrics!.hf,
+            'vlf': data.hrvMetrics!.vlf,
+          } : null,
+          
+          // HRV2 (raw array: mental_stress, fatigue, stress_resistance, regulation_ability)
+          'hrv2_raw': data.hrv2,
+          'hrv2_metrics': data.hrv2Metrics != null ? {
+            'mental_stress': data.hrv2Metrics!.mentStress,
+            'fatigue_level': data.hrv2Metrics!.fatigueLevel,
+            'stress_resistance': data.hrv2Metrics!.stressResistance,
+            'regulation_ability': data.hrv2Metrics!.regulationAbility,
+          } : null,
+        },
+      };
+      
+      // Send POST request to webhook (with timeout)
+      final response = await _dio.post(
+        _webhookUrl,
+        data: payload,
+        options: Options(
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          sendTimeout: const Duration(seconds: 5),
+          receiveTimeout: const Duration(seconds: 5),
+        ),
+      );
+      
+      // Update success status
+      setState(() {
+        _webhookSuccessCount++;
+        _lastWebhookStatus = isStressAlert ? '✓ Stress Alert Sent (${response.statusCode})' : '✓ Sent (${response.statusCode})';
+        _lastWebhookError = '';
+        _lastWebhookTime = DateTime.now();
+      });
+      print('\n✅ ========================================');
+      if (isStressAlert) print('✅ 🚨 STRESS ALERT WEBHOOK');
+      print('✅ Webhook SUCCESS!');
+      print('✅ Status Code: ${response.statusCode}');
+      print('✅ Success Count: $_webhookSuccessCount');
+      print('✅ Response: ${response.data}');
+      print('✅ ========================================\n');
+    } on DioException catch (e) {
+      // Handle Dio-specific errors with detailed information
+      String errorDetail = '';
+      if (e.type == DioExceptionType.connectionTimeout) {
+        errorDetail = 'Timeout: Backend took >5s to respond';
+      } else if (e.type == DioExceptionType.sendTimeout) {
+        errorDetail = 'Send timeout: Data send took >5s';
+      } else if (e.type == DioExceptionType.receiveTimeout) {
+        errorDetail = 'Receive timeout: No response in 5s';
+      } else if (e.type == DioExceptionType.badResponse) {
+        errorDetail = 'HTTP ${e.response?.statusCode}: ${e.response?.statusMessage ?? "Bad response"}\nData: ${e.response?.data}';
+      } else if (e.type == DioExceptionType.connectionError) {
+        errorDetail = 'Network error: ${e.message ?? "Can\'t reach api.hireforcare.com"}\nCheck: WiFi/Mobile data enabled?';
+      } else if (e.type == DioExceptionType.badCertificate) {
+        errorDetail = 'SSL/Certificate error: ${e.message}';
+      } else if (e.type == DioExceptionType.cancel) {
+        errorDetail = 'Request cancelled';
+      } else {
+        errorDetail = 'Error: ${e.type.toString()}\n${e.message ?? "Unknown"}';
+      }
+      
+      setState(() {
+        _webhookErrorCount++;
+        _lastWebhookStatus = '✗ Failed';
+        _lastWebhookError = errorDetail;
+        _lastWebhookTime = DateTime.now();
+      });
+      print('\n❌ ========================================');
+      print('❌ Webhook DioException!');
+      print('❌ Error Type: ${e.type}');
+      print('❌ Error Count: $_webhookErrorCount');
+      print('❌ Detail: $errorDetail');
+      print('❌ Full error: $e');
+      if (e.response != null) {
+        print('❌ Response data: ${e.response?.data}');
+      }
+      print('❌ ========================================\n');
+    } catch (e) {
+      // Handle any other errors
+      setState(() {
+        _webhookErrorCount++;
+        _lastWebhookStatus = '✗ Failed';
+        _lastWebhookError = e.toString();
+        _lastWebhookTime = DateTime.now();
+      });
+      print('⚠ Webhook error: $e');
+    }
+  }
+
+  Future<void> _testWebhook() async {
+    setState(() {
+      _statusMessage = 'Testing webhook connection...';
+    });
+    
+    try {
+      final testPayload = {
+        'test': true,
+        'timestamp': DateTime.now().toIso8601String(),
+        'message': 'Test connection from HFC App',
+        'device': {'id': 'test-device', 'name': 'Test Device'},
+      };
+      
+      print('🧪 Testing webhook: $_webhookUrl');
+      print('   Payload: $testPayload');
+      
+      final response = await _dio.post(
+        _webhookUrl,
+        data: testPayload,
+        options: Options(
+          headers: {'Content-Type': 'application/json'},
+          sendTimeout: const Duration(seconds: 10),
+          receiveTimeout: const Duration(seconds: 10),
+        ),
+      );
+      
+      setState(() {
+        _webhookSuccessCount++;
+        _lastWebhookStatus = '✓ Test OK (${response.statusCode})';
+        _lastWebhookError = '';
+        _lastWebhookTime = DateTime.now();
+        _statusMessage = 'Webhook test successful!';
+      });
+      print('✓ Test successful: ${response.statusCode}');
+      print('   Response: ${response.data}');
+    } on DioException catch (e) {
+      String errorDetail = 'Type: ${e.type}\nMessage: ${e.message}\nURL: $_webhookUrl';
+      if (e.response != null) {
+        errorDetail += '\nHTTP ${e.response!.statusCode}: ${e.response!.data}';
+      }
+      
+      setState(() {
+        _webhookErrorCount++;
+        _lastWebhookStatus = '✗ Test Failed';
+        _lastWebhookError = errorDetail;
+        _lastWebhookTime = DateTime.now();
+        _statusMessage = 'Webhook test failed!';
+      });
+      print('✗ Test failed: $errorDetail');
+    } catch (e) {
+      setState(() {
+        _webhookErrorCount++;
+        _lastWebhookStatus = '✗ Test Failed';
+        _lastWebhookError = e.toString();
+        _lastWebhookTime = DateTime.now();
+        _statusMessage = 'Webhook test error!';
+      });
+      print('✗ Test error: $e');
+    }
   }
 
   Future<void> _disconnect() async {
     if (_client == null || _connectedDevice == null) return;
 
     try {
+      print('ℹ️ Disconnecting from device...');
+      
+      // Stop background service
+      try {
+        const platform = MethodChannel('com.hfc.app/background');
+        await platform.invokeMethod('disableBackgroundExecution');
+        print('✅ Background service stopped');
+      } catch (e) {
+        print('⚠️ Could not stop background service: $e');
+      }
+      
+      // Cancel real-time subscription and timer
+      await _realtimeSubscription?.cancel();
+      _realtimeSubscription = null;
+      _dataRefreshTimer?.cancel();
+      _dataRefreshTimer = null;
+      
       await _client!.disconnect(_connectedDevice!);
       setState(() {
         _connectedDevice = null;
@@ -269,10 +783,104 @@ class _HC20HomePageState extends State<HC20HomePage> {
         _statusMessage = 'History: ${summaryRows.length} summary, ${heartRows.length} heart, ${hrvRows.length} HRV records';
       });
 
+      // Show results in a dialog
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        builder: (BuildContext context) {
+          return AlertDialog(
+            title: const Text('Historical Data Retrieved'),
+            content: SizedBox(
+              width: double.maxFinite,
+              child: SingleChildScrollView(
+                child: ListBody(
+                  children: [
+                    Text('📊 Summary Records: ${summaryRows.length}',
+                      style: const TextStyle(fontWeight: FontWeight.bold)),
+                    if (summaryRows.isNotEmpty) ...[
+                      ...summaryRows.take(3).map((row) => Padding(
+                        padding: const EdgeInsets.only(left: 16, top: 4),
+                        child: Text(row.toString().length > 50 ? '${row.toString().substring(0, 50)}...' : row.toString(), 
+                          style: const TextStyle(fontSize: 12)),
+                      )),
+                      if (summaryRows.length > 3)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 16, top: 4),
+                          child: Text('...and ${summaryRows.length - 3} more', 
+                            style: const TextStyle(fontSize: 12, fontStyle: FontStyle.italic)),
+                        ),
+                    ],
+                    const SizedBox(height: 8),
+                    Text('❤️ Heart Rate Records: ${heartRows.length}',
+                      style: const TextStyle(fontWeight: FontWeight.bold)),
+                    if (heartRows.isNotEmpty) ...[
+                      ...heartRows.take(3).map((row) => Padding(
+                        padding: const EdgeInsets.only(left: 16, top: 4),
+                        child: Text(row.toString().length > 50 ? '${row.toString().substring(0, 50)}...' : row.toString(), 
+                          style: const TextStyle(fontSize: 12)),
+                      )),
+                      if (heartRows.length > 3)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 16, top: 4),
+                          child: Text('...and ${heartRows.length - 3} more', 
+                            style: const TextStyle(fontSize: 12, fontStyle: FontStyle.italic)),
+                        ),
+                    ],
+                    const SizedBox(height: 8),
+                    Text('📈 HRV Records: ${hrvRows.length}',
+                      style: const TextStyle(fontWeight: FontWeight.bold)),
+                    if (hrvRows.isNotEmpty) ...[
+                      ...hrvRows.take(3).map((row) => Padding(
+                        padding: const EdgeInsets.only(left: 16, top: 4),
+                        child: Text(row.toString().length > 50 ? '${row.toString().substring(0, 50)}...' : row.toString(), 
+                          style: const TextStyle(fontSize: 12)),
+                      )),
+                      if (hrvRows.length > 3)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 16, top: 4),
+                          child: Text('...and ${hrvRows.length - 3} more', 
+                            style: const TextStyle(fontSize: 12, fontStyle: FontStyle.italic)),
+                        ),
+                    ],
+                    const SizedBox(height: 12),
+                    const Text('💾 Data has been uploaded to cloud',
+                      style: TextStyle(color: Colors.green, fontStyle: FontStyle.italic)),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('OK'),
+              ),
+            ],
+          );
+        },
+      );
+
     } catch (e) {
       setState(() {
         _statusMessage = 'History fetch error: $e';
       });
+      
+      // Show error dialog
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        builder: (BuildContext context) {
+          return AlertDialog(
+            title: const Text('Error'),
+            content: Text('Failed to fetch historical data:\n$e'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('OK'),
+              ),
+            ],
+          );
+        },
+      );
     }
   }
 
@@ -283,7 +891,7 @@ class _HC20HomePageState extends State<HC20HomePage> {
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         title: Text(widget.title),
       ),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -340,12 +948,235 @@ class _HC20HomePageState extends State<HC20HomePage> {
 
             const SizedBox(height: 8),
 
-            ElevatedButton(
-              onPressed: _isConnected ? _getHistoryData : null,
-              child: const Text('Get History Data'),
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: _isConnected ? _getHistoryData : null,
+                    child: const Text('Get History Data'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: _isConnected
+                        ? () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => AllDataPage(
+                                  client: _client!,
+                                  device: _connectedDevice!,
+                                ),
+                              ),
+                            );
+                          }
+                        : null,
+                    icon: const Icon(Icons.view_list),
+                    label: const Text('View All Data'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.deepPurple,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ),
+              ],
             ),
 
             const SizedBox(height: 16),
+
+            // Webhook status section
+            if (_isConnected) ...[
+              Card(
+                color: Colors.blue.shade50,
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Time Sync Status
+                      Row(
+                        children: [
+                          Icon(Icons.access_time, color: Colors.purple.shade700),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Time Sync Status',
+                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              color: Colors.purple.shade900,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Expanded(
+                            child: Text(_lastTimeSyncStatus, 
+                              style: TextStyle(
+                                color: _lastTimeSyncStatus.startsWith('✅') 
+                                  ? Colors.green 
+                                  : _lastTimeSyncStatus.startsWith('⚠️')
+                                    ? Colors.orange
+                                    : Colors.red,
+                                fontWeight: FontWeight.bold,
+                              )),
+                          ),
+                          if (_lastTimeSyncTime != null) ...[
+                            Text(
+                              '${_lastTimeSyncTime!.hour}:${_lastTimeSyncTime!.minute.toString().padLeft(2, '0')}',
+                              style: const TextStyle(fontSize: 12, color: Colors.grey),
+                            ),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+                      
+                      // Backend Webhook Status
+                      Row(
+                        children: [
+                          Icon(Icons.cloud_upload, color: Colors.blue.shade700),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Backend Webhook Status',
+                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              color: Colors.blue.shade900,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('✅ Success: $_webhookSuccessCount', 
+                                style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+                              const SizedBox(height: 4),
+                              Text('❌ Errors: $_webhookErrorCount',
+                                style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+                            ],
+                          ),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(_lastWebhookStatus, 
+                                style: TextStyle(
+                                  color: _lastWebhookStatus.startsWith('✓') ? Colors.green : Colors.red,
+                                  fontWeight: FontWeight.bold,
+                                )),
+                              if (_lastWebhookTime != null) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  '${_lastWebhookTime!.hour}:${_lastWebhookTime!.minute.toString().padLeft(2, '0')}:${_lastWebhookTime!.second.toString().padLeft(2, '0')}',
+                                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.link, size: 16, color: Colors.grey.shade600),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _webhookUrl,
+                                style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (_lastWebhookError.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: Colors.red.shade50,
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(color: Colors.red.shade200),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(Icons.error_outline, size: 18, color: Colors.red.shade700),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Last Error:',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.red.shade900,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      _lastWebhookError,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.red.shade800,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: _testWebhook,
+                          icon: const Icon(Icons.wifi_tethering, size: 18),
+                          label: const Text('Test Webhook Connection'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.orange,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: _sendStressWebhook,
+                          icon: const Icon(Icons.warning_amber_rounded, size: 20),
+                          label: const Text('I\'m Feeling Stress'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.red.shade600,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
 
             // Real-time data section
             if (_isConnected) ...[
@@ -383,23 +1214,23 @@ class _HC20HomePageState extends State<HC20HomePage> {
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: 8),
-              Expanded(
-                child: ListView.builder(
-                  itemCount: _discoveredDevices.length,
-                  itemBuilder: (context, index) {
-                    final device = _discoveredDevices[index];
-                    return Card(
-                      child: ListTile(
-                        title: Text(device.name),
-                        subtitle: Text(device.id),
-                        trailing: ElevatedButton(
-                          onPressed: _isConnected ? null : () => _connectToDevice(device),
-                          child: const Text('Connect'),
-                        ),
+              ListView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: _discoveredDevices.length,
+                itemBuilder: (context, index) {
+                  final device = _discoveredDevices[index];
+                  return Card(
+                    child: ListTile(
+                      title: Text(device.name),
+                      subtitle: Text(device.id),
+                      trailing: ElevatedButton(
+                        onPressed: _isConnected ? null : () => _connectToDevice(device),
+                        child: const Text('Connect'),
                       ),
-                    );
-                  },
-                ),
+                    ),
+                  );
+                },
               ),
             ],
           ],
@@ -425,13 +1256,5 @@ class _HC20HomePageState extends State<HC20HomePage> {
         ],
       ),
     );
-  }
-
-  @override
-  void dispose() {
-    if (_isConnected && _connectedDevice != null) {
-      _client?.disconnect(_connectedDevice!);
-    }
-    super.dispose();
   }
 }

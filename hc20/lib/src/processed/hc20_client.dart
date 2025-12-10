@@ -109,10 +109,12 @@ class Hc20Client {
       Hc20CloudConfig.debugPrint('[HC20Client] Warning: Could not read MAC address after 3 attempts. MAC will be set when sensors are enabled.');
     }
     
-    // RawManager is always initialized - raw upload is automatic
-    Hc20CloudConfig.debugPrint('[HC20Client] Starting RawManager for device: ${device.id}');
-    await _raw.start(device.id);
-    Hc20CloudConfig.debugPrint('[HC20Client] RawManager started successfully');
+    // DISABLED: RawManager raw data upload to Nitto cloud
+    // Will be enabled later when OAuth credentials are configured
+    // Hc20CloudConfig.debugPrint('[HC20Client] Starting RawManager for device: ${device.id}');
+    // await _raw.start(device.id);
+    // Hc20CloudConfig.debugPrint('[HC20Client] RawManager started successfully');
+    Hc20CloudConfig.debugPrint('[HC20Client] Raw data upload DISABLED - will enable later');
     
     // Enable continuous monitoring at 5-minute intervals where required
     try {
@@ -127,15 +129,17 @@ class Hc20Client {
       // ignore enabling failure; device may not support some keys
     }
     
-    // Automatically enable sensors when device connects
-    try {
-      Hc20CloudConfig.debugPrint('[HC20Client] Automatically enabling sensors after connection...');
-      await setSensorState(device);
-        Hc20CloudConfig.debugPrint('[HC20Client] Sensors enabled automatically on connection');
-    } catch (e) {
-        Hc20CloudConfig.debugPrint('[HC20Client] Warning: Could not automatically enable sensors: $e');
-      // Don't throw - connection is successful, sensors can be manually enabled later
-    }
+    // DISABLED: Automatic sensor enabling (was causing connection failures)
+    // Sensors can be manually enabled later if needed
+    // try {
+    //   Hc20CloudConfig.debugPrint('[HC20Client] Automatically enabling sensors after connection...');
+    //   await setSensorState(device);
+    //   Hc20CloudConfig.debugPrint('[HC20Client] Sensors enabled automatically on connection');
+    // } catch (e) {
+    //   Hc20CloudConfig.debugPrint('[HC20Client] Warning: Could not automatically enable sensors: $e');
+    //   // Don't throw - connection is successful, sensors can be manually enabled later
+    // }
+    Hc20CloudConfig.debugPrint('[HC20Client] Connection successful - sensors NOT auto-enabled');
   }
 
   /// Handle reconnection after device comes back in range
@@ -153,15 +157,16 @@ class Hc20Client {
       // Re-initialize notifications with force reconnect to re-establish subscriptions
       _tx.notifications(deviceId, forceReconnect: true);
       
-      // Restart RawManager to resume sensor data streaming
-      Hc20CloudConfig.debugPrint('[HC20Client] Restarting RawManager after reconnection...');
-      await _raw.stop(); // Stop first to clean up
-      await _raw.start(deviceId);
-      
-      // Re-set MAC address if we have it
-      if (_deviceMacAddress != null && _deviceMacAddress!.isNotEmpty) {
-        _raw.setMacAddress(_deviceMacAddress!);
-      }
+      // DISABLED: RawManager restart (raw data upload disabled)
+      // Hc20CloudConfig.debugPrint('[HC20Client] Restarting RawManager after reconnection...');
+      // await _raw.stop(); // Stop first to clean up
+      // await _raw.start(deviceId);
+      // 
+      // // Re-set MAC address if we have it
+      // if (_deviceMacAddress != null && _deviceMacAddress!.isNotEmpty) {
+      //   _raw.setMacAddress(_deviceMacAddress!);
+      // }
+      Hc20CloudConfig.debugPrint('[HC20Client] Raw data upload still DISABLED on reconnection');
       
       // Re-enable continuous monitoring
       try {
