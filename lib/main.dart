@@ -66,6 +66,11 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
   bool _stressAlertPending = false;  // Flag to send stress alert on next data
   StreamSubscription? _realtimeSubscription;
   Timer? _dataRefreshTimer;
+  Timer? _connectionMonitor;
+  DateTime? _lastDataReceived;
+  bool _isReconnecting = false;
+  int _reconnectAttempts = 0;
+  static const int _maxReconnectAttempts = 3;
 
   @override
   void initState() {
@@ -92,6 +97,7 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     WidgetsBinding.instance.removeObserver(this);
     _realtimeSubscription?.cancel();
     _dataRefreshTimer?.cancel();
+    _connectionMonitor?.cancel();
     _disableBackgroundExecution();
     super.dispose();
   }
@@ -161,11 +167,10 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
       await _requestPermissions();
 
       // Create HC20 client with OAuth credentials
-      // TODO: Replace with actual credentials from your HC20 dev team
       _client = await Hc20Client.create(
         config: Hc20Config(
-          clientId: 'your-client-id',
-          clientSecret: 'your-client-secret',
+          clientId: '0f3a3a9d342cd0b17859',
+          clientSecret: 'ac8c34f2c30466954c4da4c995885107fabc33d8',
         ),
       );
 
@@ -360,8 +365,15 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
       // Start listening to real-time data
       _startRealtimeDataStream(device);
       
+      // Start connection monitoring
+      _startConnectionMonitoring();
+      
       // Background execution enabled via foreground service + wake lock
       print('✓ Data streaming started - webhooks will continue in background');
+      
+      // Reset reconnection counter on successful connection
+      _reconnectAttempts = 0;
+      _isReconnecting = false;
 
     } catch (e) {
       print('❌ Connection error: $e');
@@ -410,6 +422,8 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     _realtimeSubscription = _client!.realtimeV2(device).listen(
       (data) {
         final timestamp = DateTime.now().toIso8601String();
+        _lastDataReceived = DateTime.now(); // Update last data timestamp
+        
         print('\n📊 [$timestamp] Received real-time data:');
         print('   Heart: ${data.heart}, SpO2: ${data.spo2}, BP: ${data.bp}');
         print('   Temp: ${data.temperature}, Battery: ${data.battery?.percent}%');
@@ -445,9 +459,19 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
       onError: (error) {
         print('\n❌ ========================================');
         print('❌ Real-time stream error: $error');
+        print('❌ Device may have disconnected or gone out of range');
         print('❌ ========================================\n');
+        
+        // Handle disconnection
+        if (error.toString().contains('disconnected') || 
+            error.toString().contains('connection') ||
+            error.toString().contains('GATT')) {
+          print('🔄 Device disconnected - attempting reconnection...');
+          _handleDisconnection();
+        }
+        
         setState(() {
-          _statusMessage = 'Real-time data error: $error';
+          _statusMessage = 'Connection lost: $error';
         });
       },
       onDone: () {
@@ -475,6 +499,98 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     });
     
     print('✓ Webhook will send automatically every 300 seconds (5 minutes)\n');
+  }
+  
+  void _startConnectionMonitoring() {
+    print('🔍 Starting connection monitoring (checking every 30 seconds)...');
+    
+    _connectionMonitor?.cancel();
+    _connectionMonitor = Timer.periodic(const Duration(seconds: 30), (timer) {
+      if (!_isConnected || _connectedDevice == null) {
+        print('⚠️ [Monitor] Not connected, stopping monitor');
+        timer.cancel();
+        return;
+      }
+      
+      final now = DateTime.now();
+      if (_lastDataReceived != null) {
+        final timeSinceLastData = now.difference(_lastDataReceived!).inSeconds;
+        print('🔍 [Monitor] Last data received: ${timeSinceLastData}s ago');
+        
+        // If no data for 360 seconds (6 minutes), device might be disconnected
+        // This is 60 seconds longer than the 5-minute data interval to allow for delays
+        if (timeSinceLastData > 360) {
+          print('⚠️ [Monitor] No data for ${timeSinceLastData}s - device may be disconnected');
+          _handleDisconnection();
+        } else if (timeSinceLastData > 330) {
+          print('⏰ [Monitor] Data slightly delayed (${timeSinceLastData}s), but within tolerance');
+        }
+      }
+    });
+  }
+  
+  void _handleDisconnection() async {
+    if (_isReconnecting) {
+      print('⏳ Already attempting reconnection...');
+      return;
+    }
+    
+    if (_reconnectAttempts >= _maxReconnectAttempts) {
+      print('❌ Max reconnection attempts reached. Please reconnect manually.');
+      setState(() {
+        _statusMessage = 'Device disconnected. Please reconnect manually.';
+        _isConnected = false;
+      });
+      _cleanup();
+      return;
+    }
+    
+    _isReconnecting = true;
+    _reconnectAttempts++;
+    
+    print('🔄 Reconnection attempt $_reconnectAttempts/$_maxReconnectAttempts...');
+    
+    setState(() {
+      _statusMessage = 'Reconnecting... (Attempt $_reconnectAttempts/$_maxReconnectAttempts)';
+    });
+    
+    // Cleanup old connections
+    _cleanup();
+    
+    // Wait a bit before reconnecting
+    await Future.delayed(Duration(seconds: 2));
+    
+    if (_connectedDevice != null && _client != null) {
+      try {
+        print('🔄 Attempting to reconnect to ${_connectedDevice!.name}...');
+        await _connectToDevice(_connectedDevice!);
+        print('✅ Reconnection successful!');
+      } catch (e) {
+        print('❌ Reconnection failed: $e');
+        setState(() {
+          _statusMessage = 'Reconnection failed. Retrying...';
+        });
+        
+        // Try again after delay
+        await Future.delayed(Duration(seconds: 3));
+        if (_reconnectAttempts < _maxReconnectAttempts) {
+          _isReconnecting = false;
+          _handleDisconnection();
+        }
+      }
+    }
+    
+    _isReconnecting = false;
+  }
+  
+  void _cleanup() {
+    print('🧹 Cleaning up connections...');
+    _realtimeSubscription?.cancel();
+    _realtimeSubscription = null;
+    _dataRefreshTimer?.cancel();
+    _dataRefreshTimer = null;
+    _connectionMonitor?.cancel();
+    _connectionMonitor = null;
   }
   
   void _sendStressWebhook() {
@@ -719,17 +835,17 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
         print('⚠️ Could not stop background service: $e');
       }
       
-      // Cancel real-time subscription and timer
-      await _realtimeSubscription?.cancel();
-      _realtimeSubscription = null;
-      _dataRefreshTimer?.cancel();
-      _dataRefreshTimer = null;
+      // Cleanup all subscriptions and timers
+      _cleanup();
       
       await _client!.disconnect(_connectedDevice!);
       setState(() {
         _connectedDevice = null;
         _isConnected = false;
         _statusMessage = 'Disconnected';
+        _reconnectAttempts = 0;
+        _isReconnecting = false;
+        _lastDataReceived = null;
         // Clear real-time data
         _heartRate = null;
         _spo2 = null;
@@ -926,6 +1042,102 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
             ),
             
             const SizedBox(height: 16),
+
+            // Cloud Sync Status Banner (Prominent)
+            if (_isConnected) ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Colors.blue.shade700, Colors.blue.shade500],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.blue.withOpacity(0.3),
+                      blurRadius: 8,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    // Animated cloud icon
+                    TweenAnimationBuilder(
+                      tween: Tween<double>(begin: 0, end: 1),
+                      duration: const Duration(seconds: 2),
+                      builder: (context, double value, child) {
+                        return Transform.translate(
+                          offset: Offset(0, -4 * (0.5 - (value - 0.5).abs())),
+                          child: Icon(
+                            Icons.cloud_upload,
+                            color: Colors.white,
+                            size: 32,
+                          ),
+                        );
+                      },
+                      onEnd: () {
+                        // Restart animation
+                        if (mounted) setState(() {});
+                      },
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            '☁️ CLOUD SYNC ACTIVE',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Data uploading to cloud: $_webhookSuccessCount successful',
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                            ),
+                          ),
+                          if (_lastWebhookTime != null) ...[
+                            const SizedBox(height: 2),
+                            Text(
+                              'Last sync: ${_lastWebhookTime!.hour}:${_lastWebhookTime!.minute.toString().padLeft(2, '0')}:${_lastWebhookTime!.second.toString().padLeft(2, '0')}',
+                              style: const TextStyle(
+                                color: Colors.white60,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    // Success indicator with pulse animation
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.2),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Text(
+                        '$_webhookSuccessCount',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 20,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
 
             // Control buttons
             Row(
