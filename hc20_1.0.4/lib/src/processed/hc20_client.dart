@@ -2,10 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:meta/meta.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../core/ble_adapter.dart';
 import '../core/transport.dart' show IHc20Transport, Hc20Transport, jsonPayload;
 import '../core/response_parser.dart';
 import '../core/errors.dart';
+import '../core/connection_manager.dart';
 import '../models/processed_models.dart';
 import '../raw/raw_manager.dart' as raw;
 import '../raw/uploader.dart' as raw_uploader;
@@ -43,11 +45,21 @@ class Hc20Client {
   final Hc20BleAdapter _ble;
   final IHc20Transport _tx;
   final raw.RawManager _raw;
+  final ConnectionManager _connectionManager;
   Hc20Device? _connectedDevice;
   String? _deviceMacAddress;
   bool _sensorsEnabled = false; // Track if sensors are currently enabled
+  
+  // Connection state stream controller
+  final StreamController<Hc20ConnectionStateUpdate> _connectionStateController = 
+      StreamController<Hc20ConnectionStateUpdate>.broadcast();
+  
+  // Track if this is a reconnection attempt
+  bool _isReconnectionAttempt = false;
+  // Track if reconnected state was already emitted (to prevent duplicates)
+  bool _reconnectedStateEmitted = false;
 
-  Hc20Client._(this._ble, this._tx, this._raw);
+  Hc20Client._(this._ble, this._tx, this._raw, this._connectionManager);
 
   static Future<Hc20Client> create({required Hc20Config config}) async {
     final ble = Hc20BleAdapter();
@@ -60,7 +72,62 @@ class Hc20Client {
       clientSecret: config.clientSecret,
     );
     final rm = raw.RawManager(tx, uploadConfig: uploadConfig);
-    return Hc20Client._(ble, tx, rm);
+    
+    // Initialize connection manager for persistent storage and Bluetooth state monitoring
+    final prefs = await SharedPreferences.getInstance();
+    final connectionManager = ConnectionManager(ble.bleInstance, prefs);
+    
+    final client = Hc20Client._(ble, tx, rm, connectionManager);
+    
+    // Start monitoring Bluetooth state and attempt to reconnect when Bluetooth turns back on
+    // Also enable periodic reconnection attempts (every 30 seconds) to handle out-of-range scenarios
+    connectionManager.startMonitoringBluetoothState((deviceId, deviceName) async {
+      // Skip if already connected to this device
+      if (client._connectedDevice?.id == deviceId) {
+        Hc20CloudConfig.debugPrint('[HC20Client] Already connected to device: $deviceId, skipping reconnect');
+        return;
+      }
+      
+      Hc20CloudConfig.debugPrint('[HC20Client] Attempting to reconnect to last device: $deviceId (${deviceName ?? 'unknown'})');
+      try {
+        // Mark as reconnection attempt before connecting
+        client._isReconnectionAttempt = true;
+        // Create a device object from stored info
+        final device = Hc20Device(deviceId, deviceName ?? 'HC20 Device');
+        await client.connect(device);
+        
+        // Note: Reconnected state will be emitted by _handleReconnection() callback
+        // when the BLE adapter detects the connection. If the callback doesn't fire
+        // (e.g., connection was already established), we don't emit here to avoid duplicates.
+        // The _handleReconnection() method will handle emitting the reconnected state.
+        client._isReconnectionAttempt = false;
+      } catch (e) {
+        Hc20CloudConfig.debugPrint('[HC20Client] Failed to auto-reconnect: $e');
+        client._isReconnectionAttempt = false;
+        // Don't throw - periodic reconnect will try again later
+      }
+    }, enablePeriodicReconnect: true, onBluetoothDisabled: () {
+      // Emit disconnected state when Bluetooth is turned off
+      if (client._connectedDevice != null) {
+        Hc20CloudConfig.debugPrint('[HC20Client] Bluetooth disabled, emitting disconnected state');
+        client._connectionStateController.add(Hc20ConnectionStateUpdate(
+          device: client._connectedDevice!,
+          state: Hc20ConnectionState.disconnected,
+        ));
+        Hc20CloudConfig.debugPrint('[HC20Client] Connection state updated: Disconnected (Bluetooth disabled)');
+        
+        // Clear internal state but keep last connected device stored for auto-reconnect
+        // This ensures reconnection attempts won't be incorrectly skipped
+        client._connectedDevice = null;
+        client._deviceMacAddress = null;
+        client._sensorsEnabled = false;
+        client._isReconnectionAttempt = false;
+        client._reconnectedStateEmitted = false;
+        Hc20CloudConfig.debugPrint('[HC20Client] Internal state cleared (last device kept for auto-reconnect)');
+      }
+    });
+    
+    return client;
   }
 
   Stream<Hc20Device> scan({Hc20ScanFilter filter = const Hc20ScanFilter()}) {
@@ -69,12 +136,35 @@ class Hc20Client {
         .map((d) => Hc20Device(d.id, d.name));
   }
 
+  /// Stream of connection state updates
+  /// Emits events when device connects, reconnects, or disconnects
+  /// Use this to differentiate between initial connections and reconnections
+  Stream<Hc20ConnectionStateUpdate> get connectionState => _connectionStateController.stream;
+
   Future<void> connect(Hc20Device device) async {
     _connectedDevice = device;
     
-    // Don't enable auto-reconnect here - only enable it when sensors are enabled
+    // Check if this is a reconnection attempt (device was previously connected)
+    // This flag will be set to true by ConnectionManager when reconnecting
+    final wasPreviouslyConnected = _isReconnectionAttempt || 
+        (_connectionManager.getLastConnectedDeviceId() == device.id && 
+         _connectedDevice == null);
+    
+    // Save last connected device for auto-reconnect
+    await _connectionManager.saveLastConnectedDevice(device.id, device.name);
+    
+    // Always enable auto-reconnect for automatic reconnection when device comes back in range
+    // or when Bluetooth is turned back on
     await _ble.connect(device.id);
+    _ble.enableAutoReconnect(
+      device.id, 
+      onReconnected: _handleReconnection,
+      onDisconnected: _handleDisconnection,
+    );
     _tx.notifications(device.id);
+    
+    // Reset reconnection flag after checking
+    _isReconnectionAttempt = false;
     
     // Wait 5 seconds for device to fully initialize before reading device info
     Hc20CloudConfig.debugPrint('[HC20Client] Waiting 5 seconds for device to initialize...');
@@ -109,12 +199,32 @@ class Hc20Client {
       Hc20CloudConfig.debugPrint('[HC20Client] Warning: Could not read MAC address after 3 attempts. MAC will be set when sensors are enabled.');
     }
     
-    // DISABLED: RawManager raw data upload to Nitto cloud
-    // Will be enabled later when OAuth credentials are configured
-    // Hc20CloudConfig.debugPrint('[HC20Client] Starting RawManager for device: ${device.id}');
-    // await _raw.start(device.id);
-    // Hc20CloudConfig.debugPrint('[HC20Client] RawManager started successfully');
-    Hc20CloudConfig.debugPrint('[HC20Client] Raw data upload DISABLED - will enable later');
+    // Emit connection state only after we've successfully connected and can communicate with the device
+    // If this is a reconnection attempt, the state will be emitted in _handleReconnection
+    // Otherwise, emit connected state for initial connection (only if we can read device info)
+    // We emit after reading device info to confirm the connection is actually working
+    if (!wasPreviouslyConnected) {
+      // Only emit if we successfully read device info (confirms connection is working)
+      // If device info read failed, connection might not be fully established
+      if (macAddressSet) {
+        _connectionStateController.add(Hc20ConnectionStateUpdate(
+          device: device,
+          state: Hc20ConnectionState.connected,
+        ));
+        _reconnectedStateEmitted = false; // Reset flag for initial connection
+        Hc20CloudConfig.debugPrint('[HC20Client] Connection state updated: Connected');
+      } else {
+        Hc20CloudConfig.debugPrint('[HC20Client] Connection state not updated: Device info read failed, connection may not be fully established');
+      }
+    } else {
+      // For reconnection attempts, reset flag - will be set in _handleReconnection
+      _reconnectedStateEmitted = false;
+    }
+    
+    // RawManager is always initialized - raw upload is automatic
+    Hc20CloudConfig.debugPrint('[HC20Client] Starting RawManager for device: ${device.id}');
+    await _raw.start(device.id);
+    Hc20CloudConfig.debugPrint('[HC20Client] RawManager started successfully');
     
     // Enable continuous monitoring at 5-minute intervals where required
     try {
@@ -129,25 +239,59 @@ class Hc20Client {
       // ignore enabling failure; device may not support some keys
     }
     
-    // DISABLED: Automatic sensor enabling (was causing connection failures)
-    // Sensors can be manually enabled later if needed
-    // try {
-    //   Hc20CloudConfig.debugPrint('[HC20Client] Automatically enabling sensors after connection...');
-    //   await setSensorState(device);
-    //   Hc20CloudConfig.debugPrint('[HC20Client] Sensors enabled automatically on connection');
-    // } catch (e) {
-    //   Hc20CloudConfig.debugPrint('[HC20Client] Warning: Could not automatically enable sensors: $e');
-    //   // Don't throw - connection is successful, sensors can be manually enabled later
-    // }
-    Hc20CloudConfig.debugPrint('[HC20Client] Connection successful - sensors NOT auto-enabled');
+    // Automatically enable sensors when device connects
+    try {
+      Hc20CloudConfig.debugPrint('[HC20Client] Automatically enabling sensors after connection...');
+      await setSensorState(device);
+        Hc20CloudConfig.debugPrint('[HC20Client] Sensors enabled automatically on connection');
+    } catch (e) {
+        Hc20CloudConfig.debugPrint('[HC20Client] Warning: Could not automatically enable sensors: $e');
+      // Don't throw - connection is successful, sensors can be manually enabled later
+    }
+  }
+
+  /// Handle disconnection when device goes out of range or Bluetooth is turned off
+  /// This emits disconnected state to notify listeners
+  void _handleDisconnection(String deviceId) {
+    // Only emit if this is the currently connected device
+    if (_connectedDevice?.id == deviceId) {
+      Hc20CloudConfig.debugPrint('[HC20Client] Device disconnected: $deviceId');
+      _connectionStateController.add(Hc20ConnectionStateUpdate(
+        device: _connectedDevice!,
+        state: Hc20ConnectionState.disconnected,
+      ));
+      Hc20CloudConfig.debugPrint('[HC20Client] Connection state updated: Disconnected');
+      
+      // Clear internal state but keep last connected device stored for auto-reconnect
+      // This ensures reconnection attempts won't be incorrectly skipped
+      _connectedDevice = null;
+      _deviceMacAddress = null;
+      _sensorsEnabled = false;
+      _isReconnectionAttempt = false;
+      _reconnectedStateEmitted = false;
+      Hc20CloudConfig.debugPrint('[HC20Client] Internal state cleared (last device kept for auto-reconnect)');
+    } else {
+      Hc20CloudConfig.debugPrint('[HC20Client] Disconnection callback received for different device: expected ${_connectedDevice?.id ?? 'none'}, got $deviceId');
+    }
   }
 
   /// Handle reconnection after device comes back in range
   /// This resumes all services and streams that were active before disconnection
-  /// Only re-enables sensors if they were previously enabled
+  /// Always enables sensors and uploads raw data to cloud
   Future<void> _handleReconnection(String deviceId) async {
-    if (_connectedDevice == null || _connectedDevice!.id != deviceId) {
-      Hc20CloudConfig.debugPrint('[HC20Client] Reconnection callback received for unknown device: $deviceId');
+    // If _connectedDevice is null (e.g., after automatic disconnect), restore it from stored device
+    if (_connectedDevice == null) {
+      final lastDeviceId = _connectionManager.getLastConnectedDeviceId();
+      final lastDeviceName = _connectionManager.getLastConnectedDeviceName();
+      if (lastDeviceId == deviceId) {
+        _connectedDevice = Hc20Device(deviceId, lastDeviceName ?? 'HC20 Device');
+        Hc20CloudConfig.debugPrint('[HC20Client] Restored connected device from stored info: $deviceId');
+      } else {
+        Hc20CloudConfig.debugPrint('[HC20Client] Reconnection callback received for unknown device: $deviceId');
+        return;
+      }
+    } else if (_connectedDevice!.id != deviceId) {
+      Hc20CloudConfig.debugPrint('[HC20Client] Reconnection callback received for different device: expected ${_connectedDevice!.id}, got $deviceId');
       return;
     }
     
@@ -157,16 +301,15 @@ class Hc20Client {
       // Re-initialize notifications with force reconnect to re-establish subscriptions
       _tx.notifications(deviceId, forceReconnect: true);
       
-      // DISABLED: RawManager restart (raw data upload disabled)
-      // Hc20CloudConfig.debugPrint('[HC20Client] Restarting RawManager after reconnection...');
-      // await _raw.stop(); // Stop first to clean up
-      // await _raw.start(deviceId);
-      // 
-      // // Re-set MAC address if we have it
-      // if (_deviceMacAddress != null && _deviceMacAddress!.isNotEmpty) {
-      //   _raw.setMacAddress(_deviceMacAddress!);
-      // }
-      Hc20CloudConfig.debugPrint('[HC20Client] Raw data upload still DISABLED on reconnection');
+      // Restart RawManager to resume sensor data streaming
+      Hc20CloudConfig.debugPrint('[HC20Client] Restarting RawManager after reconnection...');
+      await _raw.stop(); // Stop first to clean up
+      await _raw.start(deviceId);
+      
+      // Re-set MAC address if we have it
+      if (_deviceMacAddress != null && _deviceMacAddress!.isNotEmpty) {
+        _raw.setMacAddress(_deviceMacAddress!);
+      }
       
       // Re-enable continuous monitoring
       try {
@@ -181,25 +324,58 @@ class Hc20Client {
         // ignore enabling failure; device may not support some keys
       }
       
-      // Re-enable sensors if they were previously enabled
-      if (_sensorsEnabled && _connectedDevice != null) {
-        Hc20CloudConfig.debugPrint('[HC20Client] Re-enabling sensors after reconnection...');
+      // Always enable sensors and upload raw data to cloud on reconnection
+      // This ensures raw data streaming is active after reconnection
+      Hc20CloudConfig.debugPrint('[HC20Client] Enabling sensors and raw data upload after reconnection...');
+      bool canCommunicate = false;
+      try {
+        // Always try to read device info to verify we can actually communicate with the device
+        // This ensures the connectionState reflects the actual connection status
         try {
-          // Re-enable sensors directly without calling setSensorState() again
-          // (we already have MAC address and don't need to re-read device info)
-          final payload = <String, dynamic>{
-            'imu': {'ctrl': 0x07}, // Enable all IMU: accel (0x01) + gyro (0x02) + mag (0x04)
-            'ppg': {'ctrl': 0x07}, // Enable all PPG: green (0x01) + red (0x02) + ir (0x04)
-            'gsr': {'ctrl': 0x01}, // Enable GSR
-          };
-          await _tx.request(deviceId, 0x30, jsonPayload(0x02, payload));
-          Hc20CloudConfig.debugPrint('[HC20Client] Sensors re-enabled successfully after reconnection');
+          final deviceInfo = await readDeviceInfo(_connectedDevice!);
+          canCommunicate = true;
+          
+          // If MAC address was lost during disconnect, restore it
+          if (_deviceMacAddress == null || _deviceMacAddress!.isEmpty) {
+            if (deviceInfo.mac.isNotEmpty) {
+              _deviceMacAddress = deviceInfo.mac;
+              _raw.setMacAddress(_deviceMacAddress!);
+              Hc20CloudConfig.debugPrint('[HC20Client] MAC address restored: $_deviceMacAddress');
+            }
+          }
         } catch (e) {
-          Hc20CloudConfig.debugPrint('[HC20Client] Error re-enabling sensors after reconnection: $e');
-          // Don't throw - connection is restored, sensors can be manually re-enabled
+          Hc20CloudConfig.debugPrint('[HC20Client] Warning: Could not read device info to verify connection: $e');
+          // If we have a MAC address from before, assume connection is working
+          // (device info read might fail for other reasons)
+          if (_deviceMacAddress != null && _deviceMacAddress!.isNotEmpty) {
+            canCommunicate = true;
+            Hc20CloudConfig.debugPrint('[HC20Client] Using existing MAC address, assuming connection is working');
+          }
         }
-      } else {
-        Hc20CloudConfig.debugPrint('[HC20Client] Sensors were not enabled before disconnection, skipping sensor re-enable');
+        
+        // Call setSensorState to ensure MAC address is set and sensors are enabled
+        // This will also ensure raw data upload is properly configured
+        await setSensorState(_connectedDevice!);
+        Hc20CloudConfig.debugPrint('[HC20Client] Sensors and raw data upload enabled successfully after reconnection');
+      } catch (e) {
+        Hc20CloudConfig.debugPrint('[HC20Client] Error enabling sensors after reconnection: $e');
+        // Don't throw - connection is restored, sensors can be manually re-enabled
+      }
+      
+      // Emit reconnection state only after we've verified we can communicate with the device
+      // This ensures the connectionState reflects the actual connection status
+      if (!_reconnectedStateEmitted) {
+        // Only emit if we can communicate with the device (read device info successfully or have MAC address)
+        if (canCommunicate) {
+          _connectionStateController.add(Hc20ConnectionStateUpdate(
+            device: _connectedDevice!,
+            state: Hc20ConnectionState.reconnected,
+          ));
+          _reconnectedStateEmitted = true;
+          Hc20CloudConfig.debugPrint('[HC20Client] Connection state updated: Reconnected');
+        } else {
+          Hc20CloudConfig.debugPrint('[HC20Client] Connection state not updated: Cannot verify device communication');
+        }
       }
       
       Hc20CloudConfig.debugPrint('[HC20Client] Reconnection handling completed successfully');
@@ -349,15 +525,15 @@ class Hc20Client {
     };
     await _tx.request(d.id, 0x30, jsonPayload(0x02, payload));
     
-    // Mark sensors as enabled and enable auto-reconnect for background streaming
+    // Mark sensors as enabled
+    // Note: Auto-reconnect is already enabled in connect(), but we ensure the callback is set
     _sensorsEnabled = true;
     _ble.enableAutoReconnect(d.id, onReconnected: _handleReconnection);
-    Hc20CloudConfig.debugPrint('[HC20Client] Sensors enabled successfully. Auto-reconnect enabled for background streaming.');
+    Hc20CloudConfig.debugPrint('[HC20Client] Sensors enabled successfully.');
   }
 
   /// Disable sensors (IMU, PPG, and GSR)
-  /// Disables all sensor components and also disables auto-reconnect
-  /// since sensors are no longer active
+  /// Note: Auto-reconnect remains enabled to allow reconnection when device comes back in range
   Future<void> disableSensorState(Hc20Device d) async {
     final payload = <String, dynamic>{
       'imu': {'ctrl': 0x00}, // Disable all IMU sensors
@@ -366,10 +542,10 @@ class Hc20Client {
     };
     await _tx.request(d.id, 0x30, jsonPayload(0x02, payload));
     
-    // Mark sensors as disabled and disable auto-reconnect
+    // Mark sensors as disabled
+    // Note: We keep auto-reconnect enabled so the device can reconnect even when sensors are off
     _sensorsEnabled = false;
-    _ble.disableAutoReconnect(d.id);
-    Hc20CloudConfig.debugPrint('[HC20Client] Sensors disabled. Auto-reconnect disabled.');
+    Hc20CloudConfig.debugPrint('[HC20Client] Sensors disabled. Auto-reconnect remains enabled.');
   }
 
   /// Temporarily disable sensors without changing the _sensorsEnabled flag
@@ -386,8 +562,9 @@ class Hc20Client {
 
   /// Re-enable sensors if they were previously enabled
   /// This is used after historical data retrieval to restore sensor streaming
-  Future<void> _restoreSensors(Hc20Device d) async {
-    if (_sensorsEnabled) {
+  /// [shouldRestore] - if true, restores sensors; if false, does nothing
+  Future<void> _restoreSensors(Hc20Device d, {required bool shouldRestore}) async {
+    if (shouldRestore) {
       final payload = <String, dynamic>{
         'imu': {'ctrl': 0x07}, // Enable all IMU: accel (0x01) + gyro (0x02) + mag (0x04)
         'ppg': {'ctrl': 0x07}, // Enable all PPG: green (0x01) + red (0x02) + ir (0x04)
@@ -472,15 +649,14 @@ class Hc20Client {
       required int mm,
       required int dd,
       required int index}) async {
-    // Temporarily disable sensors before historical data retrieval to prevent packet loss
+    // Always disable sensors during historical data retrieval to prevent packet loss
+    // Track if they were enabled so we can restore them later
     bool sensorsWereEnabled = _sensorsEnabled;
-    if (sensorsWereEnabled) {
-      try {
-        await _temporarilyDisableSensors(d);
-      } catch (e) {
-        Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to disable sensors before historical data retrieval: $e');
-        // Continue anyway - historical data retrieval may still work
-      }
+    try {
+      await _temporarilyDisableSensors(d);
+    } catch (e) {
+      Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to disable sensors before historical data retrieval: $e');
+      // Continue anyway - historical data retrieval may still work
     }
 
     try {
@@ -489,13 +665,11 @@ class Hc20Client {
       return msg.data;
     } finally {
       // Always restore sensors after historical data retrieval completes
-      if (sensorsWereEnabled) {
-        try {
-          await _restoreSensors(d);
-        } catch (e) {
-          Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after historical data retrieval: $e');
-          // Don't throw - historical data retrieval succeeded, sensor restoration can be retried
-        }
+      try {
+        await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
+      } catch (e) {
+        Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after historical data retrieval: $e');
+        // Don't throw - historical data retrieval succeeded, sensor restoration can be retried
       }
     }
   }
@@ -651,18 +825,9 @@ class Hc20Client {
     required int dd,
     int? packetIndex,
   }) async {
-    // Temporarily disable sensors before historical data retrieval to prevent packet loss
-    // This maintains strong Bluetooth frequency during data transfer
+    // Track if sensors were enabled - we'll restore after upload
     bool sensorsWereEnabled = _sensorsEnabled;
-    if (sensorsWereEnabled) {
-      try {
-        await _temporarilyDisableSensors(d);
-      } catch (e) {
-        Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to disable sensors before historical data retrieval: $e');
-        // Continue anyway - historical data retrieval may still work
-      }
-    }
-
+    
     try {
       // If specific packet is requested, get it and upload
       if (packetIndex != null) {
@@ -681,6 +846,7 @@ class Hc20Client {
           mm: mm,
           dd: dd,
           packetIndex: packetIndex,
+          restoreSensorsAfterDecode: false, // Don't restore yet - wait for upload
         );
         
         // Upload RRI data to cloud after parsing
@@ -703,10 +869,17 @@ class Hc20Client {
           }
         }
         
+        // Restore sensors after upload completes
+        try {
+          await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
+        } catch (e) {
+          Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after RRI upload: $e');
+        }
+        
         return rows;
       }
       
-      // If all packets are requested, fetch them and upload each packet separately
+      // If all packets are requested, fetch them and upload all together in batches
       final rows = await getAllDayRows(
         d,
         type: Hc20HistoryType.rri5s,
@@ -714,70 +887,53 @@ class Hc20Client {
         mm: mm,
         dd: dd,
         packetIndex: packetIndex,
+        restoreSensorsAfterDecode: false, // Don't restore yet - wait for upload
       );
       
-      // Upload RRI data to cloud after parsing - upload per packet
+      // Upload RRI data to cloud after parsing - collect all entries and batch together
       if (rows.isNotEmpty) {
         try {
           final deviceInfo = await readDeviceInfo(d);
-          final packets = await _readAllHistoryPackets(
-            d,
-            dataType: 0x04, // RRI type
-            yy: yy,
-            mm: mm,
-            dd: dd,
-          );
           
-          // Get total_packets from first packet message or status length
+          // Get total_packets for metadata
           int totalPackets = 0;
-          if (packets.isNotEmpty) {
-            try {
-              final firstMsg = await _readHistoryMessage(
-                d,
-                dataType: 0x04,
-                yy: yy,
-                mm: mm,
-                dd: dd,
-                index: 1,
-              );
-              totalPackets = firstMsg.total;
-            } catch (_) {
-              // Fallback to packet count if unable to read first message
-              totalPackets = packets.length;
-            }
+          try {
+            final firstMsg = await _readHistoryMessage(
+              d,
+              dataType: 0x04,
+              yy: yy,
+              mm: mm,
+              dd: dd,
+              index: 1,
+            );
+            totalPackets = firstMsg.total;
+          } catch (_) {
+            // Fallback: estimate from row count (96 entries per packet, 8 minutes per packet)
+            totalPackets = (rows.length / 96).ceil();
           }
           
-          // Upload each packet's rows separately
-          for (final packet in packets) {
-            try {
-              // Decode this packet's rows
-              final packetRows = _decodeAllDayRows(
-                typeId: 0x04,
-                yy: packet.yy,
-                mm: packet.mm,
-                dd: packet.dd,
-                packetIndex: packet.index,
-                minPacketIndex: null,
-                totalPackets: totalPackets,
-                data: packet.data,
-              );
-              
-              if (packetRows.isNotEmpty) {
-                // Convert Hc20AllDayRow to Map format expected by uploader
-                final rriEntries = packetRows.map((row) => <String, dynamic>{
-                  'dateTime': row.dateTime,
-                  'values': row.values,
-                  'valid': row.valid,
-                }).toList();
-                
-                Hc20CloudConfig.debugPrint('[HC20Client] Triggering RRI upload for ${packetRows.length} row(s) from packet ${packet.index}');
-                await _raw.uploadAllDayRri(rriEntries, deviceInfo.mac, packet.index, totalPackets);
-              }
-            } catch (e) {
-              Hc20CloudConfig.debugPrint('[HC20Client] Error uploading RRI data for packet ${packet.index}: $e');
-              // Continue with other packets
-            }
-          }
+          // Convert all rows to entries format and calculate packet index from timestamp
+          // Each RRI packet covers 8 minutes (480 seconds), packet index is 1-based
+          final allRriEntries = rows.map((row) {
+            // Calculate packet index from timestamp
+            final dt = DateTime.parse(row.dateTime);
+            final secondsFromMidnight = dt.hour * 3600 + dt.minute * 60 + dt.second;
+            // Packet index: 1-based, each packet = 480 seconds (8 minutes)
+            final calculatedPacketIndex = (secondsFromMidnight ~/ 480) + 1;
+            
+            return <String, dynamic>{
+              'dateTime': row.dateTime,
+              'values': row.values,
+              'valid': row.valid,
+              'packet_index': calculatedPacketIndex, // Pre-calculate packet index for each entry
+            };
+          }).toList();
+          
+          Hc20CloudConfig.debugPrint('[HC20Client] Triggering RRI upload for ${allRriEntries.length} row(s) from all packets (will be batched into groups of 1000)');
+          
+          // Upload all entries together - uploader will batch into groups of 1000
+          // Pass packetIndex 0 as placeholder since each entry has its own packet_index
+          await _raw.uploadAllDayRri(allRriEntries, deviceInfo.mac, 0, totalPackets);
         } catch (e, stackTrace) {
           // Log error but don't fail the method - return rows even if upload fails
           Hc20CloudConfig.debugPrint('[HC20Client] Error uploading RRI data: $e');
@@ -785,17 +941,24 @@ class Hc20Client {
         }
       }
       
-      return rows;
-    } finally {
-      // Always restore sensors after historical data retrieval completes
-      if (sensorsWereEnabled) {
-        try {
-          await _restoreSensors(d);
-        } catch (e) {
-          Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after historical data retrieval: $e');
-          // Don't throw - historical data retrieval succeeded, sensor restoration can be retried
-        }
+      // Restore sensors after all uploads complete
+      try {
+        await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
+      } catch (e) {
+        Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after RRI upload: $e');
       }
+      
+      return rows;
+    } catch (e, stackTrace) {
+      // Restore sensors even if there's an error
+      try {
+        await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
+      } catch (restoreError) {
+        Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after error: $restoreError');
+      }
+      Hc20CloudConfig.debugPrint('[HC20Client] Error in getAllDayRriRows: $e');
+      Hc20CloudConfig.debugPrint('[HC20Client] Stack trace: $stackTrace');
+      rethrow;
     }
   }
 
@@ -805,15 +968,106 @@ class Hc20Client {
     required int mm,
     required int dd,
     int? packetIndex,
-  }) {
-    return getAllDayRows(
-      d,
-      type: Hc20HistoryType.temperature1m,
-      yy: yy,
-      mm: mm,
-      dd: dd,
-      packetIndex: packetIndex,
-    );
+  }) async {
+    // Track if sensors were enabled - we'll restore after upload
+    bool sensorsWereEnabled = _sensorsEnabled;
+    
+    try {
+      // If specific packet is requested, get it and upload
+      if (packetIndex != null) {
+        final rows = await getAllDayRows(
+          d,
+          type: Hc20HistoryType.temperature1m,
+          yy: yy,
+          mm: mm,
+          dd: dd,
+          packetIndex: packetIndex,
+          restoreSensorsAfterDecode: false, // Don't restore yet - wait for upload
+        );
+        
+        // Upload temperature data to cloud after parsing
+        if (rows.isNotEmpty) {
+          try {
+            final deviceInfo = await readDeviceInfo(d);
+            // Convert Hc20AllDayRow to Map format expected by uploader
+            final temperatureEntries = rows.map((row) => <String, dynamic>{
+              'dateTime': row.dateTime,
+              'values': row.values,
+              'valid': row.valid,
+            }).toList();
+            
+            Hc20CloudConfig.debugPrint('[HC20Client] Triggering temperature upload for ${rows.length} row(s) from packet $packetIndex');
+            await _raw.uploadAllDayTemperature(temperatureEntries, deviceInfo.mac);
+          } catch (e, stackTrace) {
+            // Log error but don't fail the method - return rows even if upload fails
+            Hc20CloudConfig.debugPrint('[HC20Client] Error uploading temperature data: $e');
+            Hc20CloudConfig.debugPrint('[HC20Client] Stack trace: $stackTrace');
+          }
+        }
+        
+        // Restore sensors after upload completes
+        try {
+          await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
+        } catch (e) {
+          Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after temperature upload: $e');
+        }
+        
+        return rows;
+      }
+      
+      // If all packets are requested, fetch them and upload all together in batches
+      final rows = await getAllDayRows(
+        d,
+        type: Hc20HistoryType.temperature1m,
+        yy: yy,
+        mm: mm,
+        dd: dd,
+        packetIndex: packetIndex,
+        restoreSensorsAfterDecode: false, // Don't restore yet - wait for upload
+      );
+      
+      // Upload temperature data to cloud after parsing - collect all entries and batch together
+      if (rows.isNotEmpty) {
+        try {
+          final deviceInfo = await readDeviceInfo(d);
+          
+          // Convert all rows to entries format
+          final allTemperatureEntries = rows.map((row) => <String, dynamic>{
+            'dateTime': row.dateTime,
+            'values': row.values,
+            'valid': row.valid,
+          }).toList();
+          
+          Hc20CloudConfig.debugPrint('[HC20Client] Triggering temperature upload for ${allTemperatureEntries.length} row(s) from all packets (will be batched into groups of 1000)');
+          
+          // Upload all entries together - uploader will batch into groups of 1000
+          await _raw.uploadAllDayTemperature(allTemperatureEntries, deviceInfo.mac);
+        } catch (e, stackTrace) {
+          // Log error but don't fail the method - return rows even if upload fails
+          Hc20CloudConfig.debugPrint('[HC20Client] Error uploading temperature data: $e');
+          Hc20CloudConfig.debugPrint('[HC20Client] Stack trace: $stackTrace');
+        }
+      }
+      
+      // Restore sensors after all uploads complete
+      try {
+        await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
+      } catch (e) {
+        Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after temperature upload: $e');
+      }
+      
+      return rows;
+    } catch (e, stackTrace) {
+      // Restore sensors even if there's an error
+      try {
+        await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
+      } catch (restoreError) {
+        Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after error: $restoreError');
+      }
+      Hc20CloudConfig.debugPrint('[HC20Client] Error in getAllDayTemperatureRows: $e');
+      Hc20CloudConfig.debugPrint('[HC20Client] Stack trace: $stackTrace');
+      rethrow;
+    }
   }
 
   Future<List<Hc20AllDayRow>> getAllDayBaroRows(
@@ -857,36 +1111,59 @@ class Hc20Client {
     required int dd,
     int? packetIndex,
   }) async {
-    final rows = await getAllDayRows(
-      d,
-      type: Hc20HistoryType.hrv5m,
-      yy: yy,
-      mm: mm,
-      dd: dd,
-      packetIndex: packetIndex,
-    );
+    // Track if sensors were enabled - we'll restore after upload
+    bool sensorsWereEnabled = _sensorsEnabled;
     
-    // Upload HRV data to cloud after parsing
-    if (rows.isNotEmpty) {
-      try {
-        final deviceInfo = await readDeviceInfo(d);
-        // Convert Hc20AllDayRow to Map format expected by uploader
-        final hrvEntries = rows.map((row) => <String, dynamic>{
-          'dateTime': row.dateTime,
-          'values': row.values,
-          'valid': row.valid,
-        }).toList();
-        
-        Hc20CloudConfig.debugPrint('[HC20Client] Triggering HRV upload for ${rows.length} row(s)');
-        await _raw.uploadAllDayHrv(hrvEntries, deviceInfo.mac);
-      } catch (e, stackTrace) {
-        // Log error but don't fail the method - return rows even if upload fails
-        Hc20CloudConfig.debugPrint('[HC20Client] Error uploading HRV data: $e');
-        Hc20CloudConfig.debugPrint('[HC20Client] Stack trace: $stackTrace');
+    try {
+      final rows = await getAllDayRows(
+        d,
+        type: Hc20HistoryType.hrv5m,
+        yy: yy,
+        mm: mm,
+        dd: dd,
+        packetIndex: packetIndex,
+        restoreSensorsAfterDecode: false, // Don't restore yet - wait for upload
+      );
+      
+      // Upload HRV data to cloud after parsing
+      if (rows.isNotEmpty) {
+        try {
+          final deviceInfo = await readDeviceInfo(d);
+          // Convert Hc20AllDayRow to Map format expected by uploader
+          final hrvEntries = rows.map((row) => <String, dynamic>{
+            'dateTime': row.dateTime,
+            'values': row.values,
+            'valid': row.valid,
+          }).toList();
+          
+          Hc20CloudConfig.debugPrint('[HC20Client] Triggering HRV upload for ${rows.length} row(s)');
+          await _raw.uploadAllDayHrv(hrvEntries, deviceInfo.mac);
+        } catch (e, stackTrace) {
+          // Log error but don't fail the method - return rows even if upload fails
+          Hc20CloudConfig.debugPrint('[HC20Client] Error uploading HRV data: $e');
+          Hc20CloudConfig.debugPrint('[HC20Client] Stack trace: $stackTrace');
+        }
       }
+      
+      // Restore sensors after upload completes
+      try {
+        await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
+      } catch (e) {
+        Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after HRV upload: $e');
+      }
+      
+      return rows;
+    } catch (e, stackTrace) {
+      // Restore sensors even if there's an error
+      try {
+        await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
+      } catch (restoreError) {
+        Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after error: $restoreError');
+      }
+      Hc20CloudConfig.debugPrint('[HC20Client] Error in getAllDayHrvRows: $e');
+      Hc20CloudConfig.debugPrint('[HC20Client] Stack trace: $stackTrace');
+      rethrow;
     }
-    
-    return rows;
   }
 
   Future<List<Hc20AllDayRow>> getAllDayGnssRows(
@@ -949,36 +1226,59 @@ class Hc20Client {
     required int dd,
     int? packetIndex,
   }) async {
-    final rows = await getAllDayRows(
-      d,
-      type: Hc20HistoryType.hrv2_5m,
-      yy: yy,
-      mm: mm,
-      dd: dd,
-      packetIndex: packetIndex,
-    );
+    // Track if sensors were enabled - we'll restore after upload
+    bool sensorsWereEnabled = _sensorsEnabled;
     
-    // Upload HRV2 data to cloud after parsing
-    if (rows.isNotEmpty) {
-      try {
-        final deviceInfo = await readDeviceInfo(d);
-        // Convert Hc20AllDayRow to Map format expected by uploader
-        final hrv2Entries = rows.map((row) => <String, dynamic>{
-          'dateTime': row.dateTime,
-          'values': row.values,
-          'valid': row.valid,
-        }).toList();
-        
-        Hc20CloudConfig.debugPrint('[HC20Client] Triggering HRV2 upload for ${rows.length} row(s)');
-        await _raw.uploadAllDayHrv2(hrv2Entries, deviceInfo.mac);
-      } catch (e, stackTrace) {
-        // Log error but don't fail the method - return rows even if upload fails
-        Hc20CloudConfig.debugPrint('[HC20Client] Error uploading HRV2 data: $e');
-        Hc20CloudConfig.debugPrint('[HC20Client] Stack trace: $stackTrace');
+    try {
+      final rows = await getAllDayRows(
+        d,
+        type: Hc20HistoryType.hrv2_5m,
+        yy: yy,
+        mm: mm,
+        dd: dd,
+        packetIndex: packetIndex,
+        restoreSensorsAfterDecode: false, // Don't restore yet - wait for upload
+      );
+      
+      // Upload HRV2 data to cloud after parsing
+      if (rows.isNotEmpty) {
+        try {
+          final deviceInfo = await readDeviceInfo(d);
+          // Convert Hc20AllDayRow to Map format expected by uploader
+          final hrv2Entries = rows.map((row) => <String, dynamic>{
+            'dateTime': row.dateTime,
+            'values': row.values,
+            'valid': row.valid,
+          }).toList();
+          
+          Hc20CloudConfig.debugPrint('[HC20Client] Triggering HRV2 upload for ${rows.length} row(s)');
+          await _raw.uploadAllDayHrv2(hrv2Entries, deviceInfo.mac);
+        } catch (e, stackTrace) {
+          // Log error but don't fail the method - return rows even if upload fails
+          Hc20CloudConfig.debugPrint('[HC20Client] Error uploading HRV2 data: $e');
+          Hc20CloudConfig.debugPrint('[HC20Client] Stack trace: $stackTrace');
+        }
       }
+      
+      // Restore sensors after upload completes
+      try {
+        await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
+      } catch (e) {
+        Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after HRV2 upload: $e');
+      }
+      
+      return rows;
+    } catch (e, stackTrace) {
+      // Restore sensors even if there's an error
+      try {
+        await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
+      } catch (restoreError) {
+        Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after error: $restoreError');
+      }
+      Hc20CloudConfig.debugPrint('[HC20Client] Error in getAllDayHrv2Rows: $e');
+      Hc20CloudConfig.debugPrint('[HC20Client] Stack trace: $stackTrace');
+      rethrow;
     }
-    
-    return rows;
   }
 
   Future<List<Hc20AllDayRow>> getAllDayRows(
@@ -989,6 +1289,7 @@ class Hc20Client {
     required int dd,
     int? packetIndex,
     bool includeSummary = false,
+    bool restoreSensorsAfterDecode = true,
   }) async {
     if (!type.isAllDayMetric) {
       throw ArgumentError('History type $type is not an all-day metric');
@@ -996,16 +1297,15 @@ class Hc20Client {
 
     final typeId = type.typeId;
 
-    // Temporarily disable sensors before historical data retrieval to prevent packet loss
+    // Always disable sensors during historical data retrieval to prevent packet loss
     // This maintains strong Bluetooth frequency during data transfer
+    // Track if they were enabled so we can restore them later
     bool sensorsWereEnabled = _sensorsEnabled;
-    if (sensorsWereEnabled) {
-      try {
-        await _temporarilyDisableSensors(d);
-      } catch (e) {
-        Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to disable sensors before historical data retrieval: $e');
-        // Continue anyway - historical data retrieval may still work
-      }
+    try {
+      await _temporarilyDisableSensors(d);
+    } catch (e) {
+      Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to disable sensors before historical data retrieval: $e');
+      // Continue anyway - historical data retrieval may still work
     }
 
     try {
@@ -1020,7 +1320,7 @@ class Hc20Client {
         );
         Hc20CloudConfig.debugPrint('HC20 DEBUG: Packet response type=0x${typeId.toRadixString(16)} reqDate=$yy-$mm-$dd respDate=${msg.yy}-${msg.mm}-${msg.dd} packetIdx=${msg.index} totalPackets=${msg.total}');
         // Use response date from device (device knows what date the data belongs to)
-        return _decodeAllDayRows(
+        final result = _decodeAllDayRows(
           typeId: typeId,
           yy: msg.yy,
           mm: msg.mm,
@@ -1029,6 +1329,15 @@ class Hc20Client {
           totalPackets: msg.total,
           data: msg.data,
         );
+        // Restore sensors after decoding completes (if requested)
+        if (restoreSensorsAfterDecode) {
+          try {
+            await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
+          } catch (e) {
+            Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after decoding: $e');
+          }
+        }
+        return result;
       }
 
       if (type == Hc20HistoryType.allDaySummary) {
@@ -1042,7 +1351,7 @@ class Hc20Client {
         );
         Hc20CloudConfig.debugPrint('HC20 DEBUG: Summary response type=0x${typeId.toRadixString(16)} reqDate=$yy-$mm-$dd respDate=${msg.yy}-${msg.mm}-${msg.dd} packetIdx=${msg.index}');
         // Use response date from device
-        return _decodeAllDayRows(
+        final result = _decodeAllDayRows(
           typeId: typeId,
           yy: msg.yy,
           mm: msg.mm,
@@ -1051,6 +1360,15 @@ class Hc20Client {
           totalPackets: msg.total,
           data: msg.data,
         );
+        // Restore sensors after decoding completes (if requested)
+        if (restoreSensorsAfterDecode) {
+          try {
+            await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
+          } catch (e) {
+            Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after decoding: $e');
+          }
+        }
+        return result;
       }
 
       final rows = <Hc20AllDayRow>[];
@@ -1108,17 +1426,27 @@ class Hc20Client {
       }
 
       rows.sort((a, b) => a.dateTime.compareTo(b.dateTime));
-      return rows;
-    } finally {
-      // Always restore sensors after historical data retrieval completes
-      if (sensorsWereEnabled) {
+      
+      // Restore sensors after all decoding completes (if requested)
+      if (restoreSensorsAfterDecode) {
         try {
-          await _restoreSensors(d);
+          await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
         } catch (e) {
-          Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after historical data retrieval: $e');
-          // Don't throw - historical data retrieval succeeded, sensor restoration can be retried
+          Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after decoding: $e');
         }
       }
+      
+      return rows;
+    } catch (e) {
+      // Restore sensors even if there's an error (if requested)
+      if (restoreSensorsAfterDecode) {
+        try {
+          await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
+        } catch (restoreError) {
+          Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after error: $restoreError');
+        }
+      }
+      rethrow;
     }
   }
 
@@ -1617,13 +1945,11 @@ class Hc20Client {
       return base64.encode(rd.sublist(5));
     } finally {
       // Always restore sensors after packet status read completes
-      if (sensorsWereEnabled) {
-        try {
-          await _restoreSensors(d);
-        } catch (e) {
-          Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after reading packet status: $e');
-          // Don't throw - packet status read succeeded, sensor restoration can be retried
-        }
+      try {
+        await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
+      } catch (e) {
+        Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after reading packet status: $e');
+        // Don't throw - packet status read succeeded, sensor restoration can be retried
       }
     }
   }
@@ -1651,13 +1977,11 @@ class Hc20Client {
       return utf8.decode(slice);
     } finally {
       // Always restore sensors after storage info read completes
-      if (sensorsWereEnabled) {
-        try {
-          await _restoreSensors(d);
-        } catch (e) {
-          Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after reading storage info: $e');
-          // Don't throw - storage info read succeeded, sensor restoration can be retried
-        }
+      try {
+        await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
+      } catch (e) {
+        Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after reading storage info: $e');
+        // Don't throw - storage info read succeeded, sensor restoration can be retried
       }
     }
   }
@@ -1755,13 +2079,46 @@ class Hc20Client {
   }
 
 
-  Future<void> disconnect(Hc20Device d) async {
+  Future<void> disconnect(Hc20Device d, {bool forgetDevice = false}) async {
+    // Emit disconnected state before clearing device info
+    if (_connectedDevice != null) {
+      _connectionStateController.add(Hc20ConnectionStateUpdate(
+        device: _connectedDevice!,
+        state: Hc20ConnectionState.disconnected,
+      ));
+    }
+    
+    // Clear last connected device if explicitly requested (manual disconnect)
+    if (forgetDevice) {
+      await _connectionManager.clearLastConnectedDevice();
+      // Disable auto-reconnect when user manually disconnects
+      _ble.disableAutoReconnect(d.id);
+      Hc20CloudConfig.debugPrint('[HC20Client] Device forgotten, auto-reconnect disabled');
+    }
+    // Otherwise, keep last device stored for auto-reconnect (automatic disconnection)
+    
     _connectedDevice = null;
     _deviceMacAddress = null;
     _sensorsEnabled = false;
+    _isReconnectionAttempt = false;
+    _reconnectedStateEmitted = false;
     await _tx.dispose();
-    await _ble.disconnect(d.id);
+    // Keep auto-reconnect enabled only if not manually disconnected
+    await _ble.disconnect(d.id, keepAutoReconnect: !forgetDevice);
     await _raw.stop();
+  }
+  
+  /// Forget the last connected device (prevents auto-reconnect)
+  Future<void> forgetLastDevice() async {
+    await _connectionManager.clearLastConnectedDevice();
+    Hc20CloudConfig.debugPrint('[HC20Client] Last device forgotten, auto-reconnect disabled');
+  }
+  
+  /// Dispose resources and close streams
+  Future<void> dispose() async {
+    await _connectionStateController.close();
+    await _tx.dispose();
+    _connectionManager.dispose();
   }
 
   Future<Hc20MsgHistory> _readHistoryMessage(Hc20Device d,

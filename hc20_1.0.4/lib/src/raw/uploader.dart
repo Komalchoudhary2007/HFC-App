@@ -14,6 +14,7 @@ abstract class RawDataUploader {
   Future<void> uploadAllDayHrv(List<Map<String, dynamic>> hrvEntries, String mac);
   Future<void> uploadAllDayRri(List<Map<String, dynamic>> rriEntries, String mac, int packetIndex, int totalPackets);
   Future<void> uploadAllDayHrv2(List<Map<String, dynamic>> hrv2Entries, String mac);
+  Future<void> uploadAllDayTemperature(List<Map<String, dynamic>> temperatureEntries, String mac);
 }
 
 class RawUploadConfig {
@@ -995,6 +996,120 @@ class HttpRawDataUploader implements RawDataUploader {
     }
     
     Hc20CloudConfig.debugPrint('[HC20 HRV2 Upload] All batches completed');
+  }
+
+  @override
+  Future<void> uploadAllDayTemperature(List<Map<String, dynamic>> temperatureEntries, String mac) async {
+    if (temperatureEntries.isEmpty) {
+      Hc20CloudConfig.debugPrint('[HC20 Temperature Upload] No entries to upload');
+      return;
+    }
+    
+    Hc20CloudConfig.debugPrint('[HC20 Temperature Upload] Preparing upload: ${temperatureEntries.length} entry/entries, MAC: $mac');
+    
+    // Helper function to convert ISO dateTime string to unix timestamp (milliseconds)
+    int _isoToUnixTimestamp(String isoString) {
+      try {
+        // Parse ISO string like "2025-01-01T12:00:00" or "2025-01-01T12:00:00.000"
+        final dt = DateTime.parse(isoString);
+        return dt.millisecondsSinceEpoch;
+      } catch (e) {
+        Hc20CloudConfig.debugPrint('[HC20 Temperature Upload] Error parsing timestamp "$isoString": $e');
+        return 0;
+      }
+    }
+    
+    // Batch entries into groups of 1000 (same as RRI)
+    const batchSize = 1000;
+    final batches = <List<Map<String, dynamic>>>[];
+    
+    for (int i = 0; i < temperatureEntries.length; i += batchSize) {
+      final end = (i + batchSize < temperatureEntries.length) ? i + batchSize : temperatureEntries.length;
+      batches.add(temperatureEntries.sublist(i, end));
+    }
+    
+    Hc20CloudConfig.debugPrint('[HC20 Temperature Upload] Split into ${batches.length} batch/batches (${batches.length} × up to $batchSize entries)');
+    
+    // Upload each batch
+    for (int batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+      final batch = batches[batchIndex];
+      final entries = <Map<String, dynamic>>[];
+      
+      for (final entry in batch) {
+        final dateTimeStr = entry['dateTime'] as String?;
+        final values = entry['values'] as Map<String, dynamic>?;
+        final valid = entry['valid'] as bool? ?? false;
+        
+        if (dateTimeStr == null || values == null) {
+          Hc20CloudConfig.debugPrint('[HC20 Temperature Upload] Skipping entry with missing dateTime or values');
+          continue;
+        }
+        
+        // Skip invalid entries
+        if (!valid) {
+          continue;
+        }
+        
+        // Convert ISO dateTime to unix timestamp
+        final timestamp = _isoToUnixTimestamp(dateTimeStr);
+        if (timestamp == 0) {
+          Hc20CloudConfig.debugPrint('[HC20 Temperature Upload] Skipping entry with invalid timestamp: $dateTimeStr');
+          continue;
+        }
+        
+        // Extract temperature values
+        final skinC = values['skinC'] as num?;
+        final envC = values['envC'] as num?;
+        
+        // Only include entries with at least one temperature value
+        if (skinC == null && envC == null) {
+          continue;
+        }
+        
+        // Map temperature values directly (skinC → surface_temp, envC → ambient_temp)
+        entries.add({
+          'device_id': mac,
+          'timestamp': timestamp,
+          'surface_temp': skinC != null ? skinC.toDouble() : null,
+          'ambient_temp': envC != null ? envC.toDouble() : null,
+        });
+      }
+      
+      if (entries.isEmpty) {
+        Hc20CloudConfig.debugPrint('[HC20 Temperature Upload] Batch ${batchIndex + 1}/${batches.length} has no valid entries, skipping');
+        continue;
+      }
+      
+      final payload = {
+        'data': entries,
+      };
+      
+      // Print JSON payload for debugging
+      final jsonPayload = jsonEncode(payload);
+      Hc20CloudConfig.debugPrint('[HC20 Temperature Upload] Batch ${batchIndex + 1}/${batches.length} JSON Payload:');
+      Hc20CloudConfig.debugPrint(jsonPayload);
+      Hc20CloudConfig.debugPrint('[HC20 Temperature Upload] Uploading batch ${batchIndex + 1}/${batches.length} to ${cfg.effectiveBaseUrl}/all-day/temperature with ${entries.length} entry/entries');
+      
+      try {
+        await _uploadWithRetry('/all-day/temperature', payload, 'HC20 Temperature Upload');
+        Hc20CloudConfig.debugPrint('[HC20 Temperature Upload] Batch ${batchIndex + 1}/${batches.length} success: Uploaded ${entries.length} entry/entries');
+      } catch (e, stackTrace) {
+        // Only log non-network errors
+        if (!_isNetworkError(e)) {
+          Hc20CloudConfig.debugPrint('[HC20 Temperature Upload] Batch ${batchIndex + 1}/${batches.length} non-network error: $e');
+          Hc20CloudConfig.debugPrint('[HC20 Temperature Upload] Batch ${batchIndex + 1}/${batches.length} stack trace: $stackTrace');
+          if (e is DioException) {
+            Hc20CloudConfig.debugPrint('[HC20 Temperature Upload] Batch ${batchIndex + 1}/${batches.length} DioException details:');
+            Hc20CloudConfig.debugPrint('  - Request: ${e.requestOptions.method} ${e.requestOptions.uri}');
+            Hc20CloudConfig.debugPrint('  - Response: ${e.response?.statusCode} ${e.response?.statusMessage}');
+            Hc20CloudConfig.debugPrint('  - Response data: ${e.response?.data}');
+          }
+        }
+        // Continue with next batch even if this one fails
+      }
+    }
+    
+    Hc20CloudConfig.debugPrint('[HC20 Temperature Upload] All batches completed');
   }
 }
 

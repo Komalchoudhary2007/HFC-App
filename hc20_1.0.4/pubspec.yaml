@@ -1,6 +1,6 @@
 name: hc20
 description: Flutter plugin for HC20 wearable (processed + raw sensor pipeline)
-version: 1.0.2
+version: 1.0.4
 homepage: https://gitlab.zensorium-labs.com/cloud-algorithm/hc20-flutter-plugin
 
 environment:
@@ -17,6 +17,7 @@ dependencies:
   retry: ^3.1.2
   rxdart: ^0.28.0
   json_annotation: ^4.9.0
+  shared_preferences: ^2.2.2
 
 dev_dependencies:
   flutter_test:

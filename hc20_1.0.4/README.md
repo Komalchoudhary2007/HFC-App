@@ -8,13 +8,13 @@ Flutter plugin for HC20 wearable providing processed data APIs and hidden raw se
 
 - When raw data is enabled, the raw data will automatically upload to Nitto cloud. Note: Please set `clientId` and `clientSecret` when creating the `Hc20Client`. You can get the `clientId` and `clientSecret` from dev team.
 
-- All data upload functions to Nitto cloud (such as raw data sensor enabled, `getAllDayHrvRows()`, `getAllDayHrv2Rows()` and `getAllDayRriRows()`) require network connectivity. However, without network connectivity, the UI won't be blocked; errors need to be handled by the HFC app.
+- All data upload functions to Nitto cloud (such as raw data sensor enabled, `getAllDayHrvRows()`, `getAllDayHrv2Rows()` and `getAllDayRriRows()`) require network connectivity. However, without network connectivity, the UI won't be blocked; errors need to be handled by the client app.
 
 - Please call `setTime()` every time you connect.
 
-## Things to Implement in the HFC App
+## Things to Implement in the client App
 
-- The HFC app must enable background sync, so that when the app is in the background, raw data can still be uploaded to Nitto Cloud.
+- The client app must enable background sync, so that when the app is in the background, raw data can still be uploaded to Nitto Cloud.
 
 - When retrieving historical data, kindly retrieve HRV, HRV2 and RRI data as well by calling `getAllDayHrvRows()`, `getAllDayHrv2Rows()` and `getAllDayRriRows()`, as these functions include automatic upload functionality to Nitto cloud.
 
@@ -32,6 +32,32 @@ dependencies:
 ```
 
 On iOS/Android, ensure Bluetooth permissions are configured.
+
+### iOS Background Modes
+
+For auto-reconnect and background sensor streaming to work on iOS, you must configure background modes in your `Info.plist`:
+
+```xml
+<key>UIBackgroundModes</key>
+<array>
+    <string>bluetooth-central</string>
+    <string>fetch</string>
+    <string>processing</string>
+</array>
+```
+
+- **`bluetooth-central`**: Required for BLE auto-reconnect and maintaining connections in the background
+- **`fetch`**: Optional, for background data uploads
+- **`processing`**: Optional, for background data processing
+
+Also ensure you have the required Bluetooth usage descriptions:
+
+```xml
+<key>NSBluetoothAlwaysUsageDescription</key>
+<string>Bluetooth is required to connect to the wearable and stream sensor data in the background.</string>
+<key>NSBluetoothPeripheralUsageDescription</key>
+<string>Bluetooth is required to connect to the wearable.</string>
+```
 
 ## Quick Start
 
@@ -113,6 +139,53 @@ client.scan(filter: Hc20ScanFilter(allowDuplicates: true)).listen((device) {
 - `filter`: Optional scan filter configuration
   - `allowDuplicates`: Whether to emit duplicate scan results (default: `false`)
 
+#### `connectionState`
+
+Stream of connection state updates. Use this to differentiate between initial connections and reconnections.
+
+```dart
+// Listen to connection state changes
+client.connectionState.listen((update) {
+  switch (update.state) {
+    case Hc20ConnectionState.connected:
+      print('Device connected: ${update.device.name}');
+      // Handle initial connection
+      break;
+    case Hc20ConnectionState.reconnected:
+      print('Device reconnected: ${update.device.name}');
+      // Handle reconnection - device came back after disconnection
+      // You can proceed with your reconnection logic here
+      break;
+    case Hc20ConnectionState.disconnected:
+      print('Device disconnected: ${update.device.name}');
+      // Handle disconnection
+      break;
+  }
+});
+```
+
+**Returns:** `Stream<Hc20ConnectionStateUpdate>`
+
+**Connection States:**
+- `Hc20ConnectionState.connected`: Initial connection (first time connecting)
+- `Hc20ConnectionState.reconnected`: Device reconnected after disconnection (auto-reconnect)
+- `Hc20ConnectionState.disconnected`: Device disconnected
+
+**Example Usage:**
+```dart
+// Monitor connection state and handle reconnections differently
+client.connectionState.listen((update) {
+  if (update.state == Hc20ConnectionState.reconnected) {
+    // Device reconnected - restore UI state, resume data collection, etc.
+    print('Device reconnected at ${update.timestamp}');
+    // Your reconnection logic here
+  } else if (update.state == Hc20ConnectionState.connected) {
+    // Initial connection - show welcome message, initialize UI, etc.
+    print('Device connected for the first time');
+  }
+});
+```
+
 ---
 
 #### `connect(Hc20Device device)`
@@ -136,15 +209,43 @@ await client.connect(device);
 
 ---
 
-#### `disconnect(Hc20Device device)`
+#### `disconnect(Hc20Device device, {bool forgetDevice = false})`
 
 Disconnects from a device and stops all data streams, including raw sensor data pipeline.
 
 ```dart
+// Manual disconnect - forget device and disable auto-reconnect
+await client.disconnect(device, forgetDevice: true);
+
+// Automatic disconnect (e.g., device out of range) - keep device for auto-reconnect
 await client.disconnect(device);
 ```
 
-**Note:** This method stops the RawManager and disables auto-reconnect if it was enabled.
+**Parameters:**
+- `device`: The device to disconnect from
+- `forgetDevice`: Optional parameter (default: `false`)
+  - `false`: Keep device stored for auto-reconnect. When device comes back in range or Bluetooth is turned back on, it will automatically reconnect.
+  - `true`: Forget the device and disable auto-reconnect. Device will not automatically reconnect. Use this when user manually disconnects.
+
+**Behavior:**
+- When `forgetDevice: false` (default):
+  - Device is stored for auto-reconnect
+  - Auto-reconnect remains enabled
+  - Device will automatically reconnect when it comes back in range or when Bluetooth is turned back on
+  - Emits `Hc20ConnectionState.disconnected` event
+  
+- When `forgetDevice: true`:
+  - Device is forgotten (removed from stored devices)
+  - Auto-reconnect is disabled
+  - Device will NOT automatically reconnect
+  - Emits `Hc20ConnectionState.disconnected` event
+  - User must manually connect again
+
+**Throws:** Errors if disconnection fails
+
+**Note:** The `forgetDevice` parameter is useful for distinguishing between:
+- **Manual disconnect** (user clicks disconnect button): Use `forgetDevice: true`
+- **Automatic disconnect** (device goes out of range): Use `forgetDevice: false` (default)
 
 ---
 

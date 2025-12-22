@@ -1,3 +1,29 @@
+/// Connection state for HC20 device
+enum Hc20ConnectionState {
+  /// Initial connection (first time connecting)
+  connected,
+  /// Reconnection (device reconnected after disconnection)
+  reconnected,
+  /// Device disconnected
+  disconnected,
+}
+
+/// Connection state update event
+class Hc20ConnectionStateUpdate {
+  /// The device this state update is for
+  final Hc20Device device;
+  /// The connection state
+  final Hc20ConnectionState state;
+  /// Timestamp when this state change occurred
+  final DateTime timestamp;
+
+  Hc20ConnectionStateUpdate({
+    required this.device,
+    required this.state,
+    DateTime? timestamp,
+  }) : timestamp = timestamp ?? DateTime.now();
+}
+
 class Hc20Device {
   final String id;
   final String name;

@@ -445,6 +445,10 @@ class RawManager {
   Future<void> uploadAllDayHrv2(List<Map<String, dynamic>> hrv2Entries, String mac) {
     return _uploader.uploadAllDayHrv2(hrv2Entries, mac);
   }
+
+  Future<void> uploadAllDayTemperature(List<Map<String, dynamic>> temperatureEntries, String mac) {
+    return _uploader.uploadAllDayTemperature(temperatureEntries, mac);
+  }
 }
 
 

@@ -20,12 +20,16 @@ class Hc20BleAdapter {
   final BleIds ids;
   final Map<String, StreamSubscription<ConnectionStateUpdate>> _connSubs = {};
   final Map<String, Function(String)?> _reconnectCallbacks = {};
+  final Map<String, Function(String)?> _disconnectCallbacks = {};
   final Map<String, bool> _autoReconnectEnabled = {};
   final Map<String, Timer?> _reconnectTimers = {};
   final Map<String, bool> _isReconnecting = {};
   final Map<String, int> _reconnectAttempts = {};
   
   Hc20BleAdapter({FlutterReactiveBle? ble, BleIds? ids}) : _ble = ble ?? FlutterReactiveBle(), ids = ids ?? BleIds();
+  
+  /// Get the underlying FlutterReactiveBle instance (for ConnectionManager)
+  FlutterReactiveBle get bleInstance => _ble;
 
   Stream<DiscoveredDevice> scan({required bool allowDuplicates}) {
     // On Android 12+ (API 31+), location is not required when using BLUETOOTH_SCAN with neverForLocation flag
@@ -136,10 +140,13 @@ class Hc20BleAdapter {
   /// Enable automatic reconnection for a device
   /// When enabled, the adapter will automatically attempt to reconnect
   /// when the connection is lost, and call the provided callback when reconnected.
-  void enableAutoReconnect(String deviceId, {Function(String)? onReconnected}) {
+  void enableAutoReconnect(String deviceId, {Function(String)? onReconnected, Function(String)? onDisconnected}) {
     _autoReconnectEnabled[deviceId] = true;
     if (onReconnected != null) {
       _reconnectCallbacks[deviceId] = onReconnected;
+    }
+    if (onDisconnected != null) {
+      _disconnectCallbacks[deviceId] = onDisconnected;
     }
     Hc20CloudConfig.debugPrint('[HC20BleAdapter] Auto-reconnect enabled for device: $deviceId');
   }
@@ -148,6 +155,7 @@ class Hc20BleAdapter {
   void disableAutoReconnect(String deviceId) {
     _autoReconnectEnabled[deviceId] = false;
     _reconnectCallbacks.remove(deviceId);
+    _disconnectCallbacks.remove(deviceId);
     _reconnectTimers[deviceId]?.cancel();
     _reconnectTimers.remove(deviceId);
     _isReconnecting[deviceId] = false;
@@ -201,6 +209,12 @@ class Hc20BleAdapter {
       // Handle disconnection
       if (update.connectionState == DeviceConnectionState.disconnected) {
         Hc20CloudConfig.debugPrint('[HC20BleAdapter] Device disconnected: $deviceId');
+        
+        // Call disconnection callback if registered
+        if (_disconnectCallbacks.containsKey(deviceId)) {
+          Hc20CloudConfig.debugPrint('[HC20BleAdapter] Calling disconnection callback for $deviceId');
+          _disconnectCallbacks[deviceId]?.call(deviceId);
+        }
         
         // If auto-reconnect is enabled, start reconnection process
         if (_autoReconnectEnabled[deviceId] == true && (_isReconnecting[deviceId] != true)) {
@@ -287,9 +301,12 @@ class Hc20BleAdapter {
     });
   }
 
-  Future<void> disconnect(String deviceId) async {
-    // Disable auto-reconnect when explicitly disconnecting
-    disableAutoReconnect(deviceId);
+  Future<void> disconnect(String deviceId, {bool keepAutoReconnect = false}) async {
+    // Only disable auto-reconnect if explicitly requested
+    // By default, keep it enabled so device can reconnect when it comes back in range
+    if (!keepAutoReconnect) {
+      disableAutoReconnect(deviceId);
+    }
     final sub = _connSubs.remove(deviceId);
     await sub?.cancel();
   }
