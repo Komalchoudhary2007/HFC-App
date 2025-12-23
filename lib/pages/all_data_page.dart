@@ -114,35 +114,22 @@ class _AllDataPageState extends State<AllDataPage> {
       final mm = now.month;
       final dd = now.day;
 
-      // Load all historical data
-      final results = await Future.wait([
-        widget.client.getAllDaySummaryRows(widget.device, yy: yy, mm: mm, dd: dd),
-        widget.client.getAllDayHeartRows(widget.device, yy: yy, mm: mm, dd: dd),
-        widget.client.getAllDayStepsRows(widget.device, yy: yy, mm: mm, dd: dd),
-        widget.client.getAllDaySpo2Rows(widget.device, yy: yy, mm: mm, dd: dd),
-        widget.client.getAllDayRriRows(widget.device, yy: yy, mm: mm, dd: dd),
-        widget.client.getAllDayTemperatureRows(widget.device, yy: yy, mm: mm, dd: dd),
-        widget.client.getAllDayBaroRows(widget.device, yy: yy, mm: mm, dd: dd),
-        widget.client.getAllDayBpRows(widget.device, yy: yy, mm: mm, dd: dd),
-        widget.client.getAllDayHrvRows(widget.device, yy: yy, mm: mm, dd: dd),
-        widget.client.getAllDaySleepRows(widget.device, yy: yy, mm: mm, dd: dd, includeSummary: true),
-        widget.client.getAllDayCaloriesRows(widget.device, yy: yy, mm: mm, dd: dd),
-        widget.client.getAllDayHrv2Rows(widget.device, yy: yy, mm: mm, dd: dd),
-      ]);
+      // Load all historical data sequentially to avoid incomplete data packets
+      _hrvData = await widget.client.getAllDayHrvRows(widget.device, yy: yy, mm: mm, dd: dd);
+      _hrv2Data = await widget.client.getAllDayHrv2Rows(widget.device, yy: yy, mm: mm, dd: dd);
+      _rriData = await widget.client.getAllDayRriRows(widget.device, yy: yy, mm: mm, dd: dd);
+      _summaryData = await widget.client.getAllDaySummaryRows(widget.device, yy: yy, mm: mm, dd: dd);
+      _heartData = await widget.client.getAllDayHeartRows(widget.device, yy: yy, mm: mm, dd: dd);
+      _stepsData = await widget.client.getAllDayStepsRows(widget.device, yy: yy, mm: mm, dd: dd);
+      _spo2Data = await widget.client.getAllDaySpo2Rows(widget.device, yy: yy, mm: mm, dd: dd);
+      _temperatureData = await widget.client.getAllDayTemperatureRows(widget.device, yy: yy, mm: mm, dd: dd);
+      _baroData = await widget.client.getAllDayBaroRows(widget.device, yy: yy, mm: mm, dd: dd);
+      _bpData = await widget.client.getAllDayBpRows(widget.device, yy: yy, mm: mm, dd: dd);
+      _caloriesData = await widget.client.getAllDayCaloriesRows(widget.device, yy: yy, mm: mm, dd: dd);
+      _sleepData = await widget.client.getAllDaySleepRows(widget.device, yy: yy, mm: mm, dd: dd, includeSummary: true);
+
 
       setState(() {
-        _summaryData = results[0];
-        _heartData = results[1];
-        _stepsData = results[2];
-        _spo2Data = results[3];
-        _rriData = results[4];
-        _temperatureData = results[5];
-        _baroData = results[6];
-        _bpData = results[7];
-        _hrvData = results[8];
-        _sleepData = results[9];
-        _caloriesData = results[10];
-        _hrv2Data = results[11];
         _isLoadingHistory = false;
         _statusMessage = 'Historical data loaded successfully!';
       });
