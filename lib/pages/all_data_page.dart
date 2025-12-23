@@ -117,12 +117,12 @@ class _AllDataPageState extends State<AllDataPage> {
       // Load all historical data sequentially to avoid incomplete data packets
       _hrvData = await widget.client.getAllDayHrvRows(widget.device, yy: yy, mm: mm, dd: dd);
       _hrv2Data = await widget.client.getAllDayHrv2Rows(widget.device, yy: yy, mm: mm, dd: dd);
+      _temperatureData = await widget.client.getAllDayTemperatureRows(widget.device, yy: yy, mm: mm, dd: dd);
       _rriData = await widget.client.getAllDayRriRows(widget.device, yy: yy, mm: mm, dd: dd);
       _summaryData = await widget.client.getAllDaySummaryRows(widget.device, yy: yy, mm: mm, dd: dd);
       _heartData = await widget.client.getAllDayHeartRows(widget.device, yy: yy, mm: mm, dd: dd);
       _stepsData = await widget.client.getAllDayStepsRows(widget.device, yy: yy, mm: mm, dd: dd);
       _spo2Data = await widget.client.getAllDaySpo2Rows(widget.device, yy: yy, mm: mm, dd: dd);
-      _temperatureData = await widget.client.getAllDayTemperatureRows(widget.device, yy: yy, mm: mm, dd: dd);
       _baroData = await widget.client.getAllDayBaroRows(widget.device, yy: yy, mm: mm, dd: dd);
       _bpData = await widget.client.getAllDayBpRows(widget.device, yy: yy, mm: mm, dd: dd);
       _caloriesData = await widget.client.getAllDayCaloriesRows(widget.device, yy: yy, mm: mm, dd: dd);
