@@ -68,10 +68,10 @@ class Hc20BleAdapter {
             
             if (hasManufacturerData || hasService) {
               // Log accepted devices
-              Hc20CloudConfig.debugPrint('HC20 SCAN DEBUG: ✅ ACCEPTED device id=${d.id} name=${d.name} mfr=[$mfrHex] services=[$services] hasMfr=$hasManufacturerData hasSvc=$hasService');
+              //Hc20CloudConfig.debugPrint('HC20 SCAN DEBUG: ✅ ACCEPTED device id=${d.id} name=${d.name} mfr=[$mfrHex] services=[$services] hasMfr=$hasManufacturerData hasSvc=$hasService');
             } else {
               // Log filtered devices
-              Hc20CloudConfig.debugPrint('HC20 SCAN DEBUG: ❌ FILTERED device id=${d.id} name=${d.name} mfr=[$mfrHex] services=[$services]');
+              //Hc20CloudConfig.debugPrint('HC20 SCAN DEBUG: ❌ FILTERED device id=${d.id} name=${d.name} mfr=[$mfrHex] services=[$services]');
             }
           }
           
@@ -82,7 +82,7 @@ class Hc20BleAdapter {
             // Check if device name contains HC20 or similar patterns (temporary debugging)
             final name = d.name.toLowerCase();
             if (name.contains('B20') || name.contains('hc-20')) {
-              Hc20CloudConfig.debugPrint('HC20 SCAN DEBUG: ⚠️ ACCEPTED BY NAME device id=${d.id} name=${d.name}');
+              //Hc20CloudConfig.debugPrint('HC20 SCAN DEBUG: ⚠️ ACCEPTED BY NAME device id=${d.id} name=${d.name}');
               return true;
             }
           }
