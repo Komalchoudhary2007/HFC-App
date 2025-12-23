@@ -42,6 +42,7 @@ class _AllDataPageState extends State<AllDataPage> {
   Map<String, String?> _dataErrors = {};
   
   bool _isLoadingHistory = false;
+  bool _hasAttemptedLoad = false; // Track if we've attempted to load data at least once
   String _statusMessage = 'Streaming real-time data...';
 
   @override
@@ -144,6 +145,8 @@ class _AllDataPageState extends State<AllDataPage> {
   // Helper function to check if samples exist in packet statuses
   Future<bool> _checkSamplesExist(int dataType, int yy, int mm, int dd) async {
     try {
+      // Use readPacketStatuses which returns List<int> directly
+      // This is what the SDK uses internally and is more efficient
       final statuses = await widget.client.readPacketStatuses(
         widget.device,
         dataType: dataType,
@@ -179,6 +182,11 @@ class _AllDataPageState extends State<AllDataPage> {
   }
 
   // Helper function to load data with error handling
+  // Each data type is checked independently:
+  // 1. Pre-check A: Check storage info (informational - doesn't block)
+  // 2. Pre-check B: Check packet statuses (definitive check per data type)
+  // 3. If packet statuses show samples exist, load data regardless of storage info
+  // 4. If packet statuses show no samples, use storage info for error message
   Future<List<Hc20AllDayRow>?> _loadDataWithChecks(
     String dataTypeName,
     int dataType,
@@ -189,21 +197,23 @@ class _AllDataPageState extends State<AllDataPage> {
     String dateStr,
   ) async {
     try {
-      // Pre-check A: Check if date exists in storage info
+      // Pre-check A: Check if date exists in storage info (informational only)
       final dateExists = await _checkDateExistsInStorage(yy, mm, dd);
-      if (!dateExists) {
-        _dataErrors[dataTypeName] = 'No data recorded for $dateStr on device';
-        return [];
-      }
 
-      // Pre-check B: Check if samples exist
+      // Pre-check B: Check if samples exist for this specific data type (definitive check)
       final samplesExist = await _checkSamplesExist(dataType, yy, mm, dd);
+      
       if (!samplesExist) {
-        _dataErrors[dataTypeName] = 'No samples for $dateStr';
+        // No samples for this data type - use storage info to determine error message
+        if (!dateExists) {
+          _dataErrors[dataTypeName] = 'No data recorded for $dateStr on device';
+        } else {
+          _dataErrors[dataTypeName] = 'No samples for $dateStr';
+        }
         return [];
       }
 
-      // Load the data
+      // Samples exist for this data type - proceed to load regardless of storage info
       final data = await loadFunction();
       
       // Empty result handling
@@ -265,13 +275,15 @@ class _AllDataPageState extends State<AllDataPage> {
         () => widget.client.getAllDayRriRows(widget.device, yy: yy, mm: mm, dd: dd),
         yy, mm, dd, dateStr,
       );
-      
-      _summaryData = await _loadDataWithChecks(
-        'Summary',
-        0x00, // Summary data type
-        () => widget.client.getAllDaySummaryRows(widget.device, yy: yy, mm: mm, dd: dd),
-        yy, mm, dd, dateStr,
-      );
+
+      _summaryData = null;
+      // _summaryData = await _loadDataWithChecks(
+      //   'Summary',
+      //   0x00, // Summary data type
+      //   () => widget.client.getAllDaySummaryRows(widget.device, yy: yy, mm: mm, dd: dd),
+      //   yy, mm, dd, dateStr,
+      // );
+
       
       _heartData = await _loadDataWithChecks(
         'Heart',
@@ -286,14 +298,12 @@ class _AllDataPageState extends State<AllDataPage> {
         () => widget.client.getAllDayStepsRows(widget.device, yy: yy, mm: mm, dd: dd),
         yy, mm, dd, dateStr,
       );
-      
       _spo2Data = await _loadDataWithChecks(
         'SpO2',
         0x03, // SpO2 data type
         () => widget.client.getAllDaySpo2Rows(widget.device, yy: yy, mm: mm, dd: dd),
         yy, mm, dd, dateStr,
       );
-      
       _baroData = await _loadDataWithChecks(
         'Baro',
         0x06, // Baro data type
@@ -324,6 +334,7 @@ class _AllDataPageState extends State<AllDataPage> {
 
       setState(() {
         _isLoadingHistory = false;
+        _hasAttemptedLoad = true; // Mark that we've attempted to load data
         final errorCount = _dataErrors.values.where((e) => e != null).length;
         if (errorCount > 0) {
           _statusMessage = 'Historical data loaded with $errorCount error(s). See details below.';
@@ -334,6 +345,7 @@ class _AllDataPageState extends State<AllDataPage> {
     } catch (e) {
       setState(() {
         _isLoadingHistory = false;
+        _hasAttemptedLoad = true; // Mark that we've attempted to load data (even if it failed)
         _statusMessage = 'Error loading historical data: $e';
       });
     }
@@ -393,7 +405,7 @@ class _AllDataPageState extends State<AllDataPage> {
                 child: CircularProgressIndicator(),
               ),
             )
-          else if (_summaryData == null)
+          else if (!_hasAttemptedLoad)
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(24),
