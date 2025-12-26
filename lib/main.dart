@@ -67,7 +67,9 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
   StreamSubscription? _realtimeSubscription;
   Timer? _dataRefreshTimer;
   Timer? _connectionMonitor;
+  Timer? _hrvRefreshTimer;  // Timer for 6-hour HRV refresh
   DateTime? _lastDataReceived;
+  DateTime? _lastHrvRefresh;  // Track last HRV refresh time
   bool _isReconnecting = false;
   int _reconnectAttempts = 0;
   static const int _maxReconnectAttempts = 3;
@@ -78,6 +80,7 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     WidgetsBinding.instance.addObserver(this);
     _initializeDio();
     _enableBackgroundExecution();
+    _requestBatteryOptimizationExemption();
     // Note: HC20 client will be initialized when user clicks scan button
   }
   
@@ -92,12 +95,33 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     }
   }
   
+  // Request exemption from battery optimization
+  Future<void> _requestBatteryOptimizationExemption() async {
+    try {
+      const platform = MethodChannel('com.hfc.app/background');
+      
+      // Check if already disabled
+      final isDisabled = await platform.invokeMethod('isBatteryOptimizationDisabled');
+      
+      if (isDisabled) {
+        print('✅ Battery optimization already disabled');
+      } else {
+        print('⚠️ Battery optimization is enabled - requesting exemption...');
+        await platform.invokeMethod('requestBatteryOptimizationExemption');
+        print('✅ Battery optimization exemption dialog shown to user');
+      }
+    } catch (e) {
+      print('⚠️ Could not request battery optimization exemption: $e');
+    }
+  }
+  
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _realtimeSubscription?.cancel();
     _dataRefreshTimer?.cancel();
     _connectionMonitor?.cancel();
+    _hrvRefreshTimer?.cancel();
     _disableBackgroundExecution();
     super.dispose();
   }
@@ -368,6 +392,9 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
       // Start connection monitoring
       _startConnectionMonitoring();
       
+      // Start HRV auto-refresh (6 hours)
+      _startHrvAutoRefresh();
+      
       // Background execution enabled via foreground service + wake lock
       print('✓ Data streaming started - webhooks will continue in background');
       
@@ -415,7 +442,7 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     print('🚀 Starting real-time data stream for device: ${device.name}');
     print('🚀 Device ID: ${device.id}');
     print('🚀 Webhook URL: $_webhookUrl');
-    print('🚀 Data refresh: Every 300 seconds (5 minutes)');
+    print('🚀 Data refresh: Every 600 seconds (10 minutes)');
     print('🚀 ========================================\n');
     
     // Subscribe and KEEP the subscription reference
@@ -482,11 +509,11 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     );
     
     print('✓ Real-time stream subscription created and stored in _realtimeSubscription');
-    print('✓ Starting periodic timer to request data every 300 seconds (5 minutes)...');
+    print('✓ Starting periodic timer to request data every 600 seconds (10 minutes)...');
     
-    // Set up periodic timer to trigger data refresh every 300 seconds (5 minutes)
+    // Set up periodic timer to trigger data refresh every 600 seconds (10 minutes)
     // This ensures the HC20 device sends fresh data regularly
-    _dataRefreshTimer = Timer.periodic(const Duration(seconds: 300), (timer) {
+    _dataRefreshTimer = Timer.periodic(const Duration(seconds: 600), (timer) {
       if (_isConnected && _connectedDevice != null) {
         print('⏰ [Timer] Requesting fresh data from device...');
         // Create a temporary subscription to trigger new data request
@@ -498,7 +525,82 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
       }
     });
     
-    print('✓ Webhook will send automatically every 300 seconds (5 minutes)\n');
+    print('✓ Webhook will send automatically every 600 seconds (10 minutes)\n');
+  }
+  
+  void _startHrvAutoRefresh() {
+    // Cancel any existing HRV timer
+    _hrvRefreshTimer?.cancel();
+    
+    print('\n📊 ========================================');
+    print('📊 Starting HRV auto-refresh');
+    print('📊 Refresh interval: Every 6 hours (21600 seconds)');
+    print('📊 Works in: Foreground AND Background');
+    print('📊 ========================================\n');
+    
+    // Set up periodic timer for 6-hour HRV data fetch
+    _hrvRefreshTimer = Timer.periodic(const Duration(hours: 6), (timer) async {
+      if (_isConnected && _connectedDevice != null && _client != null) {
+        print('\n⏰ [HRV Auto-Refresh] 6-hour timer triggered');
+        print('   Current time: ${DateTime.now().toIso8601String()}');
+        
+        await _fetchHrvData();
+      } else {
+        print('⚠️  [HRV Auto-Refresh] Device not connected, skipping refresh');
+      }
+    });
+    
+    // Also do an immediate first fetch
+    print('🚀 [HRV Auto-Refresh] Doing immediate first HRV fetch...');
+    _fetchHrvData();
+    
+    print('✓ HRV auto-refresh started - will run every 6 hours\n');
+  }
+  
+  Future<void> _fetchHrvData() async {
+    if (_client == null || _connectedDevice == null) {
+      print('⚠️  [HRV Fetch] No device connected');
+      return;
+    }
+    
+    try {
+      final now = DateTime.now();
+      final yy = now.year % 100;
+      final mm = now.month;
+      final dd = now.day;
+      final dateStr = '${now.year}-${mm.toString().padLeft(2, '0')}-${dd.toString().padLeft(2, '0')}';
+      
+      print('\n📊 ========================================');
+      print('📊 Fetching HRV data for $dateStr');
+      print('📊 Device: ${_connectedDevice!.name}');
+      print('📊 Note: SDK automatically uploads to Nitto cloud');
+      print('📊 ========================================');
+      
+      // Fetch HRV data from device
+      // This automatically triggers upload to Nitto cloud server
+      final hrvRows = await _client!.getAllDayHrvRows(
+        _connectedDevice!,
+        yy: yy,
+        mm: mm,
+        dd: dd,
+      );
+      
+      print('✅ HRV data fetched: ${hrvRows.length} records');
+      print('✅ Data automatically uploaded to Nitto cloud by SDK');
+      
+      setState(() {
+        _lastHrvRefresh = DateTime.now();
+      });
+      
+      print('✅ HRV refresh completed successfully\n');
+    } catch (e) {
+      print('❌ Error fetching HRV data: $e');
+      
+      // Handle specific error codes
+      if (e.toString().contains('0xE2') || e.toString().contains('0xe2')) {
+        print('ℹ️  Device reported no HRV data available');
+      }
+    }
   }
   
   void _startConnectionMonitoring() {
@@ -517,12 +619,12 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
         final timeSinceLastData = now.difference(_lastDataReceived!).inSeconds;
         print('🔍 [Monitor] Last data received: ${timeSinceLastData}s ago');
         
-        // If no data for 360 seconds (6 minutes), device might be disconnected
-        // This is 60 seconds longer than the 5-minute data interval to allow for delays
-        if (timeSinceLastData > 360) {
+        // If no data for 720 seconds (12 minutes), device might be disconnected
+        // This is 120 seconds longer than the 10-minute data interval to allow for delays
+        if (timeSinceLastData > 720) {
           print('⚠️ [Monitor] No data for ${timeSinceLastData}s - device may be disconnected');
           _handleDisconnection();
-        } else if (timeSinceLastData > 330) {
+        } else if (timeSinceLastData > 660) {
           print('⏰ [Monitor] Data slightly delayed (${timeSinceLastData}s), but within tolerance');
         }
       }
@@ -591,6 +693,8 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     _dataRefreshTimer = null;
     _connectionMonitor?.cancel();
     _connectionMonitor = null;
+    _hrvRefreshTimer?.cancel();
+    _hrvRefreshTimer = null;
   }
   
   void _sendStressWebhook() {
@@ -620,9 +724,14 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
   
   Future<void> _sendDataToWebhook(Hc20Device device, Hc20RealtimeV2 data, {bool isStressAlert = false}) async {
     try {
+      final now = DateTime.now();
+      final utcNow = now.toUtc();
+      
       // Prepare comprehensive payload with all available data
       final payload = {
-        'timestamp': DateTime.now().toIso8601String(),
+        'timestamp': utcNow.toIso8601String(), // Send UTC timestamp
+        'timestamp_local': now.toIso8601String(), // Also send local time for reference
+        'timezone_offset': now.timeZoneOffset.inMinutes, // Send timezone offset in minutes
         'stress_alert': isStressAlert,
         'device': {
           'id': device.id,
@@ -765,9 +874,14 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     });
     
     try {
+      final now = DateTime.now();
+      final utcNow = now.toUtc();
+      
       final testPayload = {
         'test': true,
-        'timestamp': DateTime.now().toIso8601String(),
+        'timestamp': utcNow.toIso8601String(), // Send UTC timestamp
+        'timestamp_local': now.toIso8601String(), // Also send local time for reference
+        'timezone_offset': now.timeZoneOffset.inMinutes, // Send timezone offset in minutes
         'message': 'Test connection from HFC App',
         'device': {'id': 'test-device', 'name': 'Test Device'},
       };
@@ -1241,6 +1355,73 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
                               style: const TextStyle(fontSize: 12, color: Colors.grey),
                             ),
                           ],
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+                      
+                      // HRV Auto-Refresh Status
+                      Row(
+                        children: [
+                          Icon(Icons.auto_graph, color: Colors.purple.shade700),
+                          const SizedBox(width: 8),
+                          Text(
+                            'HRV Auto-Refresh',
+                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              color: Colors.purple.shade900,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Every 6 hours → Nitto Cloud',
+                                  style: TextStyle(
+                                    color: Colors.purple.shade700,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                if (_lastHrvRefresh != null)
+                                  Text(
+                                    'Last: ${_lastHrvRefresh!.hour}:${_lastHrvRefresh!.minute.toString().padLeft(2, '0')}',
+                                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                                  )
+                                else
+                                  const Text(
+                                    'Waiting for first fetch...',
+                                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.purple.shade100,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(Icons.check_circle, size: 16, color: Colors.purple.shade700),
+                                const SizedBox(width: 4),
+                                Text(
+                                  'Active',
+                                  style: TextStyle(
+                                    color: Colors.purple.shade700,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         ],
                       ),
                       const SizedBox(height: 20),

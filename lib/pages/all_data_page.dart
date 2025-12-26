@@ -22,6 +22,7 @@ class _AllDataPageState extends State<AllDataPage> {
   
   // Timer for periodic data refresh
   Timer? _dataRefreshTimer;
+  Timer? _hrvRefreshTimer; // Timer for 6-hour HRV data refresh
   
   // Historical data
   List<Hc20AllDayRow>? _summaryData;
@@ -48,6 +49,7 @@ class _AllDataPageState extends State<AllDataPage> {
   void initState() {
     super.initState();
     _startRealtimeStream();
+    _startHrvAutoRefresh();
   }
 
   void _startRealtimeStream() {
@@ -100,9 +102,56 @@ class _AllDataPageState extends State<AllDataPage> {
     print('✓ [AllDataPage] Timer started - will refresh every 60 seconds (1 minute)');
   }
 
+  void _startHrvAutoRefresh() {
+    print('📊 [AllDataPage] Starting HRV auto-refresh - every 6 hours');
+    
+    // Set up periodic timer to refresh HRV data every 6 hours (21600 seconds)
+    _hrvRefreshTimer = Timer.periodic(const Duration(hours: 6), (timer) async {
+      if (mounted) {
+        print('⏰ [AllDataPage] 6-hour timer trigger - loading HRV data...');
+        await _loadHrvData();
+      } else {
+        print('⚠️ [AllDataPage] Widget unmounted, stopping HRV timer');
+        timer.cancel();
+      }
+    });
+    
+    print('✓ [AllDataPage] HRV auto-refresh started - will load every 6 hours');
+  }
+
+  Future<void> _loadHrvData() async {
+    try {
+      final now = DateTime.now();
+      final yy = now.year % 100;
+      final mm = now.month;
+      final dd = now.day;
+      final dateStr = '${now.year}-${mm.toString().padLeft(2, '0')}-${dd.toString().padLeft(2, '0')}';
+
+      print('📊 [AllDataPage] Loading HRV data for $dateStr...');
+      
+      _hrvData = await _loadDataWithChecks(
+        'HRV',
+        0x08, // HRV data type
+        () => widget.client.getAllDayHrvRows(widget.device, yy: yy, mm: mm, dd: dd),
+        yy, mm, dd, dateStr,
+      );
+
+      if (mounted) {
+        setState(() {
+          // Update UI with new HRV data
+        });
+      }
+      
+      print('✓ [AllDataPage] HRV data loaded successfully');
+    } catch (e) {
+      print('❌ [AllDataPage] Error loading HRV data: $e');
+    }
+  }
+
   @override
   void dispose() {
     _dataRefreshTimer?.cancel();
+    _hrvRefreshTimer?.cancel();
     super.dispose();
   }
 
