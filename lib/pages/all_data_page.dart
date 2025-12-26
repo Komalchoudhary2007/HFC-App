@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:hc20/hc20.dart';
 
@@ -107,127 +106,178 @@ class _AllDataPageState extends State<AllDataPage> {
     super.dispose();
   }
 
-  // Helper function to check if date exists in storage info
-  Future<bool> _checkDateExistsInStorage(int yy, int mm, int dd) async {
-    try {
-      final storageInfoJson = await widget.client.readStorageInfo(widget.device);
-      if (storageInfoJson.isEmpty) return false;
-      
-      final storageInfo = json.decode(storageInfoJson) as Map<String, dynamic>;
-      // Storage info typically contains dates in format like "YY-MM-DD" or similar
-      // Check if the date exists in the storage info
-      final dateKey = '${yy.toString().padLeft(2, '0')}-${mm.toString().padLeft(2, '0')}-${dd.toString().padLeft(2, '0')}';
-      final dateKeyAlt = '$yy-$mm-$dd';
-      
-      // Check various possible formats in storage info
-      if (storageInfo.containsKey(dateKey) || storageInfo.containsKey(dateKeyAlt)) {
-        return true;
-      }
-      
-      // Also check if storage info has a dates array or list
-      if (storageInfo.containsKey('dates')) {
-        final dates = storageInfo['dates'];
-        if (dates is List) {
-          return dates.contains(dateKey) || dates.contains(dateKeyAlt);
-        }
-      }
-      
-      // If storage info exists but date format is unknown, assume date might exist
-      // (storage info format may vary, so we'll be lenient here)
-      return storageInfo.isNotEmpty;
-    } catch (e) {
-      print('Error checking storage info: $e');
-      // If we can't read storage info, continue anyway
-      return true;
-    }
-  }
-
-  // Helper function to check if samples exist in packet statuses
-  Future<bool> _checkSamplesExist(int dataType, int yy, int mm, int dd) async {
-    try {
-      // Use readPacketStatuses which returns List<int> directly
-      // This is what the SDK uses internally and is more efficient
-      final statuses = await widget.client.readPacketStatuses(
-        widget.device,
-        dataType: dataType,
-        yy: yy,
-        mm: mm,
-        dd: dd,
-      );
-      
-      // Check if statuses list is empty or all zeros
-      if (statuses.isEmpty) return false;
-      
-      // Check if any status is non-zero (non-zero means packet exists)
-      return statuses.any((status) => status != 0);
-    } catch (e) {
-      print('Error checking packet statuses: $e');
-      // If we can't read packet statuses, continue anyway
-      return true;
-    }
-  }
-
   // Helper function to handle errors and convert 0xE2 to specific message
   String? _handleError(dynamic error, String dateStr) {
     if (error is Exception) {
       final errorStr = error.toString();
-      // Check for error code 0xE2
+      // Check for error code 0xE2 (request date does not exist)
       if (errorStr.contains('0xE2') || errorStr.contains('0xe2') || 
-          errorStr.contains('code=226') || errorStr.contains('code=0xe2')) {
-        return 'No historical data for $dateStr (device reported none).';
+          errorStr.contains('code=226') || errorStr.contains('code=0xe2') ||
+          errorStr.contains('request date does not exist')) {
+        return 'No record found for $dateStr';
+      }
+      // Check for other common error patterns
+      if (errorStr.contains('does not exist') || errorStr.contains('not found')) {
+        return 'No record found for $dateStr';
       }
       return errorStr;
+    }
+    final errorStr = error.toString();
+    if (errorStr.contains('0xE2') || errorStr.contains('0xe2') || 
+        errorStr.contains('request date does not exist')) {
+      return 'No record found for $dateStr';
     }
     return error.toString();
   }
 
-  // Helper function to load data with error handling
-  // Each data type is checked independently:
-  // 1. Pre-check A: Check storage info (informational - doesn't block)
-  // 2. Pre-check B: Check packet statuses (definitive check per data type)
-  // 3. If packet statuses show samples exist, load data regardless of storage info
-  // 4. If packet statuses show no samples, use storage info for error message
-  Future<List<Hc20AllDayRow>?> _loadDataWithChecks(
+  // Helper function to fetch one data type with all checks batched together
+  // ✅ CRITICAL: Batches storage info + packet statuses + data retrieval together
+  // This ensures sensors are disabled once and re-enabled once per data type
+  // 
+  // How the mutex system works:
+  // 1. All three operations (readStorageInfo, readPacketStatuses, getDataFn) call _acquireHistoryMutex()
+  // 2. When Future.wait() starts all three futures, they queue in the mutex system:
+  //    - First operation acquires mutex → sensors disabled (mutex depth 0→1)
+  //    - Second operation queues (mutex held)
+  //    - Third operation queues (mutex held)
+  // 3. Operations execute sequentially through the mutex queue
+  // 4. When all three complete and queue is empty → sensors re-enabled
+  // Result: Sensors toggle once per data type (1 disable + 1 enable)
+  Future<List<Hc20AllDayRow>?> _fetchDataTypeWithAllChecks(
     String dataTypeName,
     int dataType,
-    Future<List<Hc20AllDayRow>> Function() loadFunction,
     int yy,
     int mm,
     int dd,
     String dateStr,
+    Future<List<Hc20AllDayRow>> Function() getDataFn,
   ) async {
+    dynamic caughtError;
+    
     try {
-      // Pre-check A: Check if date exists in storage info (informational only)
-      final dateExists = await _checkDateExistsInStorage(yy, mm, dd);
+      // ✅ CRITICAL: Batch storage info + packet statuses + data retrieval together
+      // All three operations will queue in the plugin's mutex system
+      // Sensors will be disabled once and re-enabled once when all operations complete
+      // Each operation (readStorageInfo, readPacketStatuses, getAllDayXRows) internally
+      // calls _acquireHistoryMutex() and _releaseHistoryMutex() - the mutex system
+      // handles sensor disable/enable automatically
+      // ✅ ERROR HANDLING: Catch all errors and don't re-throw - handle them after Future.wait
+      final batchResults = await Future.wait([
+        widget.client.readStorageInfo(widget.device).catchError((e, stackTrace) {
+          print('⚠️ [ERROR] DataType: $dataTypeName | Operation: readStorageInfo | Error: $e');
+          if (caughtError == null) caughtError = e; // Store error for later handling
+          return ''; // Return empty string on error
+        }),  // Storage info check (acquires mutex)
+        widget.client.readPacketStatuses(
+          widget.device,
+          dataType: dataType,
+          yy: yy,
+          mm: mm,
+          dd: dd,
+        ).catchError((e, stackTrace) {
+          print('⚠️ [ERROR] DataType: $dataTypeName | Operation: readPacketStatuses | Error: $e');
+          if (caughtError == null) caughtError = e; // Store error if not already set
+          return <int>[]; // Return empty list on error
+        }),  // Packet statuses check (acquires mutex)
+        getDataFn().catchError((e, stackTrace) {
+          print('⚠️ [ERROR] DataType: $dataTypeName | Operation: getDataFn | Error: $e');
+          if (caughtError == null) caughtError = e; // Store error for later handling
+          return <Hc20AllDayRow>[]; // Return empty list on error - don't re-throw
+        }),  // Data retrieval (acquires mutex via getAllDayRows)
+      ], eagerError: false);
 
-      // Pre-check B: Check if samples exist for this specific data type (definitive check)
-      final samplesExist = await _checkSamplesExist(dataType, yy, mm, dd);
-      
-      if (!samplesExist) {
-        // No samples for this data type - use storage info to determine error message
-        if (!dateExists) {
-          _dataErrors[dataTypeName] = 'No data recorded for $dateStr on device';
-        } else {
-          _dataErrors[dataTypeName] = 'No samples for $dateStr';
-        }
+      // Check if we caught any errors during the batch operations
+      if (caughtError != null) {
+        print('❌ [FINAL ERROR] DataType: $dataTypeName | Error: $caughtError');
+        _dataErrors[dataTypeName] = _handleError(caughtError, dateStr);
+        return null;
+      }
+
+      final statuses = batchResults[1] as List<int>;
+      final data = batchResults[2] as List<Hc20AllDayRow>;
+
+      // Check if data exists
+      final hasData = statuses.any((s) => s != 0) && data.isNotEmpty;
+
+      if (!hasData) {
+        // No samples for this data type
+        _dataErrors[dataTypeName] = 'No record found for $dateStr';
         return [];
       }
 
-      // Samples exist for this data type - proceed to load regardless of storage info
-      final data = await loadFunction();
-      
       // Empty result handling
       if (data.isEmpty) {
-        _dataErrors[dataTypeName] = '(no rows returned)';
+        _dataErrors[dataTypeName] = 'No record found for $dateStr';
         return data;
       }
-      
+
       // Clear any previous errors
       _dataErrors[dataTypeName] = null;
+      print('✓ $dataTypeName: ${data.length} rows');
       return data;
-    } catch (e) {
-      // Error handling
+    } catch (e, stackTrace) {
+      // Error handling - catch any exceptions that escape the catchError handlers
+      print('❌ [UNHANDLED ERROR] DataType: $dataTypeName | Error: $e');
+      print('❌ [UNHANDLED ERROR] DataType: $dataTypeName | Stack trace: $stackTrace');
       _dataErrors[dataTypeName] = _handleError(e, dateStr);
+      return null;
+    }
+  }
+
+  // Helper function to fetch sleep data (no packet status check, but still batch storage info + retrieval)
+  // Sleep data doesn't use packet statuses, but we still batch operations to minimize sensor toggling
+  // Both operations (readStorageInfo and getAllDaySleepRows) go through the mutex system
+  Future<List<Hc20AllDayRow>?> _fetchSleepDataWithChecks(
+    int yy,
+    int mm,
+    int dd,
+    String dateStr,
+    Future<List<Hc20AllDayRow>> Function() getDataFn,
+  ) async {
+    dynamic caughtError;
+    
+    try {
+      // ✅ CRITICAL: Batch storage info + data retrieval together
+      // Sleep data doesn't need packet status check, but still batch operations
+      // Both operations acquire mutex internally - sensors toggle once for both operations
+      // ✅ ERROR HANDLING: Catch all errors and don't re-throw - handle them after Future.wait
+      final batchResults = await Future.wait([
+        widget.client.readStorageInfo(widget.device).catchError((e, stackTrace) {
+          print('⚠️ [ERROR] DataType: Sleep | Operation: readStorageInfo | Error: $e');
+          if (caughtError == null) caughtError = e; // Store error for later handling
+          return ''; // Return empty string on error
+        }),  // Acquires mutex
+        getDataFn().catchError((e, stackTrace) {
+          print('⚠️ [ERROR] DataType: Sleep | Operation: getDataFn | Error: $e');
+          if (caughtError == null) caughtError = e; // Store error for later handling
+          return <Hc20AllDayRow>[]; // Return empty list on error - don't re-throw
+        }),  // Acquires mutex via getAllDayRows
+      ], eagerError: false);
+
+      // Check if we caught any errors during the batch operations
+      if (caughtError != null) {
+        print('❌ [FINAL ERROR] DataType: Sleep | Error: $caughtError');
+        _dataErrors['Sleep'] = _handleError(caughtError, dateStr);
+        return null;
+      }
+
+      final data = batchResults[1] as List<Hc20AllDayRow>;
+
+      // Check if data exists
+      if (data.isEmpty) {
+        _dataErrors['Sleep'] = 'No record found for $dateStr';
+        return [];
+      }
+
+      // Clear any previous errors
+      _dataErrors['Sleep'] = null;
+      print('✓ Sleep: ${data.length} rows');
+      return data;
+    } catch (e, stackTrace) {
+      // Error handling - catch any exceptions that escape the catchError handlers
+      print('❌ [UNHANDLED ERROR] DataType: Sleep | Error: $e');
+      print('❌ [UNHANDLED ERROR] DataType: Sleep | Stack trace: $stackTrace');
+      _dataErrors['Sleep'] = _handleError(e, dateStr);
       return null;
     }
   }
@@ -246,91 +296,201 @@ class _AllDataPageState extends State<AllDataPage> {
       final dd = now.day;
       final dateStr = '${now.year}-${mm.toString().padLeft(2, '0')}-${dd.toString().padLeft(2, '0')}';
 
-      // Load all historical data sequentially to avoid incomplete data packets
-      // Each call includes pre-checks and error handling
-      _hrvData = await _loadDataWithChecks(
-        'HRV',
-        0x08, // HRV data type
-        () => widget.client.getAllDayHrvRows(widget.device, yy: yy, mm: mm, dd: dd),
-        yy, mm, dd, dateStr,
-      );
+     
+      try {
+        _heartData = await _fetchDataTypeWithAllChecks(
+          'Heart',
+          0x01,
+          yy, mm, dd, dateStr,
+          () => widget.client.getAllDayHeartRows(widget.device, yy: yy, mm: mm, dd: dd),
+        );
+      } catch (e, stackTrace) {
+        print('❌ [FATAL ERROR] Heart data failed: $e');
+        print('Stack trace: $stackTrace');
+        _dataErrors['Heart'] = _handleError(e, dateStr);
+        _heartData = null;
+      }
       
-      _hrv2Data = await _loadDataWithChecks(
-        'HRV2',
-        0x0C, // HRV2 data type
-        () => widget.client.getAllDayHrv2Rows(widget.device, yy: yy, mm: mm, dd: dd),
-        yy, mm, dd, dateStr,
-      );
+      // Steps data
+      print('📊 [2/11] Processing Steps data...');
+      try {
+        _stepsData = await _fetchDataTypeWithAllChecks(
+          'Steps',
+          0x02,
+          yy, mm, dd, dateStr,
+          () => widget.client.getAllDayStepsRows(widget.device, yy: yy, mm: mm, dd: dd),
+        );
+      } catch (e, stackTrace) {
+        print('❌ [FATAL ERROR] Heart data failed: $e');
+        print('Stack trace: $stackTrace');
+        _dataErrors['Heart'] = _handleError(e, dateStr);
+        _heartData = null;
+      }
       
-      _temperatureData = await _loadDataWithChecks(
-        'Temperature',
-        0x05, // Temperature data type
-        () => widget.client.getAllDayTemperatureRows(widget.device, yy: yy, mm: mm, dd: dd),
-        yy, mm, dd, dateStr,
-      );
+      // Steps data
+      print('📊 [2/11] Processing Steps data...');
+      try {
+        _stepsData = await _fetchDataTypeWithAllChecks(
+          'Steps',
+          0x02,
+          yy, mm, dd, dateStr,
+          () => widget.client.getAllDayStepsRows(widget.device, yy: yy, mm: mm, dd: dd),
+        );
+      } catch (e, stackTrace) {
+        print('❌ [FATAL ERROR] Steps data failed: $e');
+        print('Stack trace: $stackTrace');
+        _dataErrors['Steps'] = _handleError(e, dateStr);
+        _stepsData = null;
+      }
       
-      _rriData = await _loadDataWithChecks(
-        'RRI',
-        0x04, // RRI data type
-        () => widget.client.getAllDayRriRows(widget.device, yy: yy, mm: mm, dd: dd),
-        yy, mm, dd, dateStr,
-      );
+      // SpO2 data
+      print('📊 [3/11] Processing SpO2 data...');
+      try {
+        _spo2Data = await _fetchDataTypeWithAllChecks(
+          'SpO2',
+          0x03,
+          yy, mm, dd, dateStr,
+          () => widget.client.getAllDaySpo2Rows(widget.device, yy: yy, mm: mm, dd: dd),
+        );
+      } catch (e, stackTrace) {
+        print('❌ [FATAL ERROR] SpO2 data failed: $e');
+        print('Stack trace: $stackTrace');
+        _dataErrors['SpO2'] = _handleError(e, dateStr);
+        _spo2Data = null;
+      }
+      
+      // RRI data
+      print('📊 [4/11] Processing RRI data...');
+      try {
+        _rriData = await _fetchDataTypeWithAllChecks(
+          'RRI',
+          0x04,
+          yy, mm, dd, dateStr,
+          () => widget.client.getAllDayRriRows(widget.device, yy: yy, mm: mm, dd: dd),
+        );
+      } catch (e, stackTrace) {
+        print('❌ [FATAL ERROR] RRI data failed: $e');
+        print('Stack trace: $stackTrace');
+        _dataErrors['RRI'] = _handleError(e, dateStr);
+        _rriData = null;
+      }
+      
+      // Temperature data
+      print('📊 [5/11] Processing Temperature data...');
+      try {
+        _temperatureData = await _fetchDataTypeWithAllChecks(
+          'Temperature',
+          0x05,
+          yy, mm, dd, dateStr,
+          () => widget.client.getAllDayTemperatureRows(widget.device, yy: yy, mm: mm, dd: dd),
+        );
+      } catch (e, stackTrace) {
+        print('❌ [FATAL ERROR] Temperature data failed: $e');
+        print('Stack trace: $stackTrace');
+        _dataErrors['Temperature'] = _handleError(e, dateStr);
+        _temperatureData = null;
+      }
+      
+      // Baro data
+      print('📊 [6/11] Processing Baro data...');
+      try {
+        _baroData = await _fetchDataTypeWithAllChecks(
+          'Baro',
+          0x06,
+          yy, mm, dd, dateStr,
+          () => widget.client.getAllDayBaroRows(widget.device, yy: yy, mm: mm, dd: dd),
+        );
+      } catch (e, stackTrace) {
+        print('❌ [FATAL ERROR] Baro data failed: $e');
+        print('Stack trace: $stackTrace');
+        _dataErrors['Baro'] = _handleError(e, dateStr);
+        _baroData = null;
+      }
+      
+      // BP data
+      print('📊 [7/11] Processing BP data...');
+      try {
+        _bpData = await _fetchDataTypeWithAllChecks(
+          'BP',
+          0x07,
+          yy, mm, dd, dateStr,
+          () => widget.client.getAllDayBpRows(widget.device, yy: yy, mm: mm, dd: dd),
+        );
+      } catch (e, stackTrace) {
+        print('❌ [FATAL ERROR] BP data failed: $e');
+        print('Stack trace: $stackTrace');
+        _dataErrors['BP'] = _handleError(e, dateStr);
+        _bpData = null;
+      }
+      
+      // HRV data
+      print('📊 [8/11] Processing HRV data...');
+      try {
+        _hrvData = await _fetchDataTypeWithAllChecks(
+          'HRV',
+          0x08,
+          yy, mm, dd, dateStr,
+          () => widget.client.getAllDayHrvRows(widget.device, yy: yy, mm: mm, dd: dd),
+        );
+      } catch (e, stackTrace) {
+        print('❌ [FATAL ERROR] HRV data failed: $e');
+        print('Stack trace: $stackTrace');
+        _dataErrors['HRV'] = _handleError(e, dateStr);
+        _hrvData = null;
+      }
+      
+      // Calories data
+      print('📊 [9/11] Processing Calories data...');
+      try {
+        _caloriesData = await _fetchDataTypeWithAllChecks(
+          'Calories',
+          0x09,
+          yy, mm, dd, dateStr,
+          () => widget.client.getAllDayCaloriesRows(widget.device, yy: yy, mm: mm, dd: dd),
+        );
+      } catch (e, stackTrace) {
+        print('❌ [FATAL ERROR] Calories data failed: $e');
+        print('Stack trace: $stackTrace');
+        _dataErrors['Calories'] = _handleError(e, dateStr);
+        _caloriesData = null;
+      }
+      
+      // HRV2 data
+      print('📊 [10/11] Processing HRV2 data...');
+      try {
+        _hrv2Data = await _fetchDataTypeWithAllChecks(
+          'HRV2',
+          0x0C,
+          yy, mm, dd, dateStr,
+          () => widget.client.getAllDayHrv2Rows(widget.device, yy: yy, mm: mm, dd: dd),
+        );
+      } catch (e, stackTrace) {
+        print('❌ [FATAL ERROR] HRV2 data failed: $e');
+        print('Stack trace: $stackTrace');
+        _dataErrors['HRV2'] = _handleError(e, dateStr);
+        _hrv2Data = null;
+      }
 
+      // Sleep data (no packet status check)
+      print('📊 [11/11] Processing Sleep data...');
+      try {
+        _sleepData = await _fetchSleepDataWithChecks(
+          yy, mm, dd, dateStr,
+          () => widget.client.getAllDaySleepRows(widget.device, yy: yy, mm: mm, dd: dd, includeSummary: true),
+        );
+      } catch (e, stackTrace) {
+        print('❌ [FATAL ERROR] Sleep data failed: $e');
+        print('Stack trace: $stackTrace');
+        _dataErrors['Sleep'] = _handleError(e, dateStr);
+        _sleepData = null;
+      }
+
+      print('✅ All historical data retrieval completed');
+
+      // Summary data (currently disabled)
       _summaryData = null;
-      // _summaryData = await _loadDataWithChecks(
-      //   'Summary',
-      //   0x00, // Summary data type
-      //   () => widget.client.getAllDaySummaryRows(widget.device, yy: yy, mm: mm, dd: dd),
-      //   yy, mm, dd, dateStr,
-      // );
 
-      
-      _heartData = await _loadDataWithChecks(
-        'Heart',
-        0x01, // Heart data type
-        () => widget.client.getAllDayHeartRows(widget.device, yy: yy, mm: mm, dd: dd),
-        yy, mm, dd, dateStr,
-      );
-      
-      _stepsData = await _loadDataWithChecks(
-        'Steps',
-        0x02, // Steps data type
-        () => widget.client.getAllDayStepsRows(widget.device, yy: yy, mm: mm, dd: dd),
-        yy, mm, dd, dateStr,
-      );
-      _spo2Data = await _loadDataWithChecks(
-        'SpO2',
-        0x03, // SpO2 data type
-        () => widget.client.getAllDaySpo2Rows(widget.device, yy: yy, mm: mm, dd: dd),
-        yy, mm, dd, dateStr,
-      );
-      _baroData = await _loadDataWithChecks(
-        'Baro',
-        0x06, // Baro data type
-        () => widget.client.getAllDayBaroRows(widget.device, yy: yy, mm: mm, dd: dd),
-        yy, mm, dd, dateStr,
-      );
-      
-      _bpData = await _loadDataWithChecks(
-        'BP',
-        0x07, // BP data type
-        () => widget.client.getAllDayBpRows(widget.device, yy: yy, mm: mm, dd: dd),
-        yy, mm, dd, dateStr,
-      );
-      
-      _caloriesData = await _loadDataWithChecks(
-        'Calories',
-        0x0B, // Calories data type
-        () => widget.client.getAllDayCaloriesRows(widget.device, yy: yy, mm: mm, dd: dd),
-        yy, mm, dd, dateStr,
-      );
-      
-      _sleepData = await _loadDataWithChecks(
-        'Sleep',
-        0x0A, // Sleep data type
-        () => widget.client.getAllDaySleepRows(widget.device, yy: yy, mm: mm, dd: dd, includeSummary: true),
-        yy, mm, dd, dateStr,
-      );
+      print('✅ All operations completed - sensors re-enabled');
 
       setState(() {
         _isLoadingHistory = false;
