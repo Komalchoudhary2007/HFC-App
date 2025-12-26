@@ -106,6 +106,14 @@ class Hc20ResponseParser {
         final dd = p[3];
         final idx = p[4] | (p[5] << 8);
         final total = p[6] | (p[7] << 8);
+        // Print full payload for type 0x00 (allDaySummary) before slicing
+        if (type == 0x00) {
+          final hexString = p.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
+          print('HC20 DEBUG: getAllDaySummaryRows FULL payload (length=${p.length}):');
+          print('  Hex: $hexString');
+          print('  Decimal: ${p.join(' ')}');
+          print('  Header: type=0x${type.toRadixString(16)} yy=$yy mm=$mm dd=$dd idx=$idx total=$total');
+        }
         final data = Uint8List.fromList(p.sublist(8));
         return Hc20MsgHistory(type, yy, mm, dd, idx, total, data);
       default:

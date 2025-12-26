@@ -65,6 +65,12 @@ class Hc20Client {
   final List<Completer<void>> _historyQueue = [];
   int _historyMutexDepth = 0; // Track re-entrancy depth for nested calls
 
+  // Sensor disable tracking for history operations
+  // These fields track sensor state during historical data retrieval to avoid frequent disable/enable cycles
+  bool _sensorsDisabledForHistory = false; // Track if sensors are currently disabled for history operations
+  Hc20Device? _historyDevice; // Track device for sensor operations during history retrieval
+  bool _sensorsWereEnabledBeforeHistory = false; // Track if sensors were enabled before history operations
+
   Hc20Client._(this._ble, this._tx, this._raw, this._connectionManager);
 
   static Future<Hc20Client> create({required Hc20Config config}) async {
@@ -448,8 +454,9 @@ class Hc20Client {
 
       // 2) Trigger for Realtime V2 (0x05 with 0x02) - serialized with historical data operations
       // This ensures realtime data doesn't interfere with historical data retrieval
+      // Note: No device needed here as this doesn't disable sensors
       () async {
-        await _acquireHistoryMutex();
+        await _acquireHistoryMutex(device: null);
         try {
           await _tx.request(d.id, 0x05, const [0x02]);
           Hc20CloudConfig.debugPrint('[HC20Client] Realtime V2 trigger sent');
@@ -569,7 +576,8 @@ class Hc20Client {
   /// incomplete Bluetooth packets when multiple calls are made concurrently
   /// Supports re-entrancy: if called from within a method that already holds the mutex,
   /// it will increment the depth counter instead of queuing
-  Future<void> _acquireHistoryMutex() async {
+  /// Also handles sensor disable/enable lifecycle: disables sensors when first operation starts
+  Future<void> _acquireHistoryMutex({Hc20Device? device}) async {
     // If we already hold the mutex (re-entrant call), just increment depth
     if (_historyMutexDepth > 0) {
       _historyMutexDepth++;
@@ -583,6 +591,11 @@ class Hc20Client {
       _historyMutex!.complete();
       _historyMutexDepth = 1;
       Hc20CloudConfig.debugPrint('[HC20Client] History mutex acquired');
+      
+      // Disable sensors when first operation starts (if device provided and sensors are enabled)
+      if (device != null && _sensorsEnabled && !_sensorsDisabledForHistory) {
+        await _disableSensorsForHistoryOperations(device);
+      }
       return;
     }
     
@@ -593,10 +606,16 @@ class Hc20Client {
     await completer.future;
     _historyMutexDepth = 1;
     Hc20CloudConfig.debugPrint('[HC20Client] History mutex acquired from queue');
+    
+    // Disable sensors when first operation starts (if device provided and sensors are enabled)
+    if (device != null && _sensorsEnabled && !_sensorsDisabledForHistory) {
+      await _disableSensorsForHistoryOperations(device);
+    }
   }
   
   /// Release the history mutex and process the next queued operation
   /// Supports re-entrancy: only releases when depth reaches 0
+  /// Also handles sensor restore: re-enables sensors when all operations complete
   void _releaseHistoryMutex() {
     // If this is a re-entrant release, just decrement depth
     if (_historyMutexDepth > 1) {
@@ -610,13 +629,65 @@ class Hc20Client {
     if (_historyQueue.isEmpty) {
       _historyMutex = null;
       Hc20CloudConfig.debugPrint('[HC20Client] History mutex released (no queued operations)');
+      
+      // Re-enable sensors when all operations complete (queue is empty)
+      if (_sensorsDisabledForHistory && _historyDevice != null) {
+        _restoreSensorsAfterAllHistoryOperations(_historyDevice!);
+      }
     } else {
       final next = _historyQueue.removeAt(0);
       _historyMutex = Completer<void>();
       _historyMutex!.complete();
       next.complete();
       Hc20CloudConfig.debugPrint('[HC20Client] History mutex released, processing next operation (${_historyQueue.length} remaining)');
+      // Don't restore sensors yet - there are more operations queued
     }
+  }
+
+  /// Disable sensors when starting historical data operations
+  /// This is called once when the first operation starts (mutex depth goes from 0 to 1)
+  Future<void> _disableSensorsForHistoryOperations(Hc20Device d) async {
+    if (_sensorsDisabledForHistory) {
+      // Already disabled, just update device reference
+      _historyDevice = d;
+      return;
+    }
+    
+    _sensorsWereEnabledBeforeHistory = _sensorsEnabled;
+    _historyDevice = d;
+    
+    if (_sensorsWereEnabledBeforeHistory) {
+      try {
+        await _temporarilyDisableSensors(d);
+        _sensorsDisabledForHistory = true;
+        Hc20CloudConfig.debugPrint('[HC20Client] Sensors disabled for historical data operations (queue length: ${_historyQueue.length})');
+      } catch (e) {
+        Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to disable sensors before historical data retrieval: $e');
+        // Continue anyway - historical data retrieval may still work
+      }
+    }
+  }
+
+  /// Re-enable sensors when all historical data operations complete
+  /// This is called when the mutex is fully released (queue is empty)
+  Future<void> _restoreSensorsAfterAllHistoryOperations(Hc20Device d) async {
+    if (!_sensorsDisabledForHistory) {
+      return;
+    }
+    
+    if (_sensorsWereEnabledBeforeHistory) {
+      try {
+        await _restoreSensors(d, shouldRestore: true);
+        Hc20CloudConfig.debugPrint('[HC20Client] Sensors restored after all historical data operations completed');
+      } catch (e) {
+        Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after historical data retrieval: $e');
+      }
+    }
+    
+    // Reset tracking state
+    _sensorsDisabledForHistory = false;
+    _historyDevice = null;
+    _sensorsWereEnabledBeforeHistory = false;
   }
 
   /// Temporarily disable sensors without changing the _sensorsEnabled flag
@@ -721,34 +792,16 @@ class Hc20Client {
       required int dd,
       required int index}) async {
     // Acquire mutex to serialize historical data retrieval operations
-    await _acquireHistoryMutex();
+    // Sensor disable/enable is handled by the mutex system
+    await _acquireHistoryMutex(device: d);
     
     try {
-      // Always disable sensors during historical data retrieval to prevent packet loss
-      // Track if they were enabled so we can restore them later
-      bool sensorsWereEnabled = _sensorsEnabled;
-      try {
-        await _temporarilyDisableSensors(d);
-      } catch (e) {
-        Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to disable sensors before historical data retrieval: $e');
-        // Continue anyway - historical data retrieval may still work
-      }
-
-      try {
-        final msg = await _readHistoryMessage(d,
-            dataType: dataType, yy: yy, mm: mm, dd: dd, index: index);
-        return msg.data;
-      } finally {
-        // Always restore sensors after historical data retrieval completes
-        try {
-          await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
-        } catch (e) {
-          Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after historical data retrieval: $e');
-          // Don't throw - historical data retrieval succeeded, sensor restoration can be retried
-        }
-      }
+      final msg = await _readHistoryMessage(d,
+          dataType: dataType, yy: yy, mm: mm, dd: dd, index: index);
+      return msg.data;
     } finally {
       // Always release mutex, even if operation fails
+      // Sensor restoration happens in _releaseHistoryMutex when queue is empty
       _releaseHistoryMutex();
     }
   }
@@ -756,10 +809,11 @@ class Hc20Client {
   // Convenience typed history getters (0x17):
   Future<Hc20AllDaySummary> getAllDaySummary(Hc20Device d,
       {required int yy, required int mm, required int dd}) async {
-    // readHistoryPacket already handles sensor disable/enable
-    final data = await readHistoryPacket(d,
-        dataType: 0x00, yy: yy, mm: mm, dd: dd, index: 0);
-    if (data.isEmpty) {
+    // Use the same decoding logic as getAllDaySummaryRows for consistency
+    // This ensures both methods handle the same JSON key variations
+    final rows = await getAllDaySummaryRows(d, yy: yy, mm: mm, dd: dd);
+    
+    if (rows.isEmpty || !rows.first.valid) {
       return Hc20AllDaySummary(
           steps: 0,
           calories: 0,
@@ -769,20 +823,18 @@ class Hc20Client {
           activeCalories: 0,
           silentCalories: 0);
     }
-    final end = data.lastIndexOf(0x00);
-    final slice = end > 0 ? data.sublist(0, end) : data;
-    if (slice.isEmpty) {
-      return Hc20AllDaySummary(
-          steps: 0,
-          calories: 0,
-          distance: 0,
-          activeTime: 0,
-          silentTime: 0,
-          activeCalories: 0,
-          silentCalories: 0);
-    }
-    return Hc20AllDaySummary.fromJson(
-        json.decode(utf8.decode(slice)) as Map<String, dynamic>);
+    
+    // Extract values from the decoded row, handling all key variations
+    final values = rows.first.values;
+    return Hc20AllDaySummary(
+      steps: (values['stepsTotal'] ?? values['steps'] ?? 0) as int,
+      calories: (values['caloriesTotalKcal'] ?? values['calories'] ?? 0) as int,
+      distance: (values['distanceTotalM'] ?? values['distance'] ?? 0) as int,
+      activeTime: (values['activeTimeSec'] ?? values['active_time'] ?? 0) as int,
+      silentTime: (values['silentTimeSec'] ?? values['silent_time'] ?? 0) as int,
+      activeCalories: (values['activeCaloriesKcal'] ?? values['active_calories'] ?? 0) as int,
+      silentCalories: (values['silentCaloriesKcal'] ?? values['silent_calories'] ?? 0) as int,
+    );
   }
 
   String _isoString(DateTime dt) {
@@ -904,8 +956,8 @@ class Hc20Client {
     required int dd,
     int? packetIndex,
   }) async {
-    // Track if sensors were enabled - we'll restore after upload
-    bool sensorsWereEnabled = _sensorsEnabled;
+    // Sensor disable/enable is handled by the mutex system in getAllDayRows
+    // No need to track or restore sensors here
     
     try {
       // If specific packet is requested, get it and upload
@@ -948,13 +1000,8 @@ class Hc20Client {
           }
         }
         
-        // Restore sensors after upload completes
-        try {
-          await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
-        } catch (e) {
-          Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after RRI upload: $e');
-        }
-        
+        // Sensor restoration is handled by the mutex system when all operations complete
+        // No need to restore sensors here
         return rows;
       }
       
@@ -1020,21 +1067,12 @@ class Hc20Client {
         }
       }
       
-      // Restore sensors after all uploads complete
-      try {
-        await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
-      } catch (e) {
-        Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after RRI upload: $e');
-      }
-      
+      // Sensor restoration is handled by the mutex system when all operations complete
+      // No need to restore sensors here
       return rows;
     } catch (e, stackTrace) {
-      // Restore sensors even if there's an error
-      try {
-        await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
-      } catch (restoreError) {
-        Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after error: $restoreError');
-      }
+      // Sensor restoration is handled by the mutex system when all operations complete
+      // No need to restore sensors here even on error
       Hc20CloudConfig.debugPrint('[HC20Client] Error in getAllDayRriRows: $e');
       Hc20CloudConfig.debugPrint('[HC20Client] Stack trace: $stackTrace');
       rethrow;
@@ -1048,8 +1086,8 @@ class Hc20Client {
     required int dd,
     int? packetIndex,
   }) async {
-    // Track if sensors were enabled - we'll restore after upload
-    bool sensorsWereEnabled = _sensorsEnabled;
+    // Sensor disable/enable is handled by the mutex system in getAllDayRows
+    // No need to track or restore sensors here
     
     try {
       // If specific packet is requested, get it and upload
@@ -1084,13 +1122,8 @@ class Hc20Client {
           }
         }
         
-        // Restore sensors after upload completes
-        try {
-          await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
-        } catch (e) {
-          Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after temperature upload: $e');
-        }
-        
+        // Sensor restoration is handled by the mutex system when all operations complete
+        // No need to restore sensors here
         return rows;
       }
       
@@ -1128,21 +1161,12 @@ class Hc20Client {
         }
       }
       
-      // Restore sensors after all uploads complete
-      try {
-        await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
-      } catch (e) {
-        Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after temperature upload: $e');
-      }
-      
+      // Sensor restoration is handled by the mutex system when all operations complete
+      // No need to restore sensors here
       return rows;
     } catch (e, stackTrace) {
-      // Restore sensors even if there's an error
-      try {
-        await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
-      } catch (restoreError) {
-        Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after error: $restoreError');
-      }
+      // Sensor restoration is handled by the mutex system when all operations complete
+      // No need to restore sensors here even on error
       Hc20CloudConfig.debugPrint('[HC20Client] Error in getAllDayTemperatureRows: $e');
       Hc20CloudConfig.debugPrint('[HC20Client] Stack trace: $stackTrace');
       rethrow;
@@ -1190,8 +1214,8 @@ class Hc20Client {
     required int dd,
     int? packetIndex,
   }) async {
-    // Track if sensors were enabled - we'll restore after upload
-    bool sensorsWereEnabled = _sensorsEnabled;
+    // Sensor disable/enable is handled by the mutex system in getAllDayRows
+    // No need to track or restore sensors here
     
     try {
       final rows = await getAllDayRows(
@@ -1224,21 +1248,12 @@ class Hc20Client {
         }
       }
       
-      // Restore sensors after upload completes
-      try {
-        await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
-      } catch (e) {
-        Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after HRV upload: $e');
-      }
-      
+      // Sensor restoration is handled by the mutex system when all operations complete
+      // No need to restore sensors here
       return rows;
     } catch (e, stackTrace) {
-      // Restore sensors even if there's an error
-      try {
-        await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
-      } catch (restoreError) {
-        Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after error: $restoreError');
-      }
+      // Sensor restoration is handled by the mutex system when all operations complete
+      // No need to restore sensors here even on error
       Hc20CloudConfig.debugPrint('[HC20Client] Error in getAllDayHrvRows: $e');
       Hc20CloudConfig.debugPrint('[HC20Client] Stack trace: $stackTrace');
       rethrow;
@@ -1305,8 +1320,8 @@ class Hc20Client {
     required int dd,
     int? packetIndex,
   }) async {
-    // Track if sensors were enabled - we'll restore after upload
-    bool sensorsWereEnabled = _sensorsEnabled;
+    // Sensor disable/enable is handled by the mutex system in getAllDayRows
+    // No need to track or restore sensors here
     
     try {
       final rows = await getAllDayRows(
@@ -1339,21 +1354,12 @@ class Hc20Client {
         }
       }
       
-      // Restore sensors after upload completes
-      try {
-        await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
-      } catch (e) {
-        Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after HRV2 upload: $e');
-      }
-      
+      // Sensor restoration is handled by the mutex system when all operations complete
+      // No need to restore sensors here
       return rows;
     } catch (e, stackTrace) {
-      // Restore sensors even if there's an error
-      try {
-        await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
-      } catch (restoreError) {
-        Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after error: $restoreError');
-      }
+      // Sensor restoration is handled by the mutex system when all operations complete
+      // No need to restore sensors here even on error
       Hc20CloudConfig.debugPrint('[HC20Client] Error in getAllDayHrv2Rows: $e');
       Hc20CloudConfig.debugPrint('[HC20Client] Stack trace: $stackTrace');
       rethrow;
@@ -1376,7 +1382,8 @@ class Hc20Client {
 
     // Acquire mutex to serialize historical data retrieval operations
     // This prevents concurrent calls from interfering with each other and causing incomplete Bluetooth packets
-    await _acquireHistoryMutex();
+    // Sensor disable/enable is handled by the mutex system
+    await _acquireHistoryMutex(device: d);
     
     try {
       return await _getAllDayRowsImpl(
@@ -1391,6 +1398,7 @@ class Hc20Client {
       );
     } finally {
       // Always release mutex, even if operation fails
+      // Sensor restoration happens in _releaseHistoryMutex when queue is empty
       _releaseHistoryMutex();
     }
   }
@@ -1407,16 +1415,8 @@ class Hc20Client {
   }) async {
     final typeId = type.typeId;
 
-    // Always disable sensors during historical data retrieval to prevent packet loss
-    // This maintains strong Bluetooth frequency during data transfer
-    // Track if they were enabled so we can restore them later
-    bool sensorsWereEnabled = _sensorsEnabled;
-    try {
-      await _temporarilyDisableSensors(d);
-    } catch (e) {
-      Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to disable sensors before historical data retrieval: $e');
-      // Continue anyway - historical data retrieval may still work
-    }
+    // Sensor disable/enable is handled by the mutex system in getAllDayRows
+    // No need to disable/enable sensors here
 
     try {
       if (packetIndex != null) {
@@ -1439,14 +1439,8 @@ class Hc20Client {
           totalPackets: msg.total,
           data: msg.data,
         );
-        // Restore sensors after decoding completes (if requested)
-        if (restoreSensorsAfterDecode) {
-          try {
-            await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
-          } catch (e) {
-            Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after decoding: $e');
-          }
-        }
+        // Sensor restoration is handled by the mutex system when all operations complete
+        // No need to restore sensors here
         return result;
       }
 
@@ -1460,6 +1454,12 @@ class Hc20Client {
           index: 0,
         );
         Hc20CloudConfig.debugPrint('HC20 DEBUG: Summary response type=0x${typeId.toRadixString(16)} reqDate=$yy-$mm-$dd respDate=${msg.yy}-${msg.mm}-${msg.dd} packetIdx=${msg.index}');
+        // Print raw bytes
+        final bytes = msg.data;
+        final hexString = bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
+        print('HC20 DEBUG: getAllDaySummaryRows raw bytes (length=${bytes.length}):');
+        print('  Hex: $hexString');
+        print('  Decimal: ${bytes.join(' ')}');
         // Use response date from device
         final result = _decodeAllDayRows(
           typeId: typeId,
@@ -1470,14 +1470,8 @@ class Hc20Client {
           totalPackets: msg.total,
           data: msg.data,
         );
-        // Restore sensors after decoding completes (if requested)
-        if (restoreSensorsAfterDecode) {
-          try {
-            await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
-          } catch (e) {
-            Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after decoding: $e');
-          }
-        }
+        // Sensor restoration is handled by the mutex system when all operations complete
+        // No need to restore sensors here
         return result;
       }
 
@@ -1537,25 +1531,12 @@ class Hc20Client {
 
       rows.sort((a, b) => a.dateTime.compareTo(b.dateTime));
       
-      // Restore sensors after all decoding completes (if requested)
-      if (restoreSensorsAfterDecode) {
-        try {
-          await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
-        } catch (e) {
-          Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after decoding: $e');
-        }
-      }
-      
+      // Sensor restoration is handled by the mutex system when all operations complete
+      // No need to restore sensors here
       return rows;
     } catch (e) {
-      // Restore sensors even if there's an error (if requested)
-      if (restoreSensorsAfterDecode) {
-        try {
-          await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
-        } catch (restoreError) {
-          Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after error: $restoreError');
-        }
-      }
+      // Sensor restoration is handled by the mutex system when all operations complete
+      // No need to restore sensors here even on error
       rethrow;
     }
   }
@@ -1589,8 +1570,20 @@ class Hc20Client {
 
     switch (typeId) {
       case 0x00:
+        // Find null terminator and slice data up to it (excluding the null byte)
+        // If null is at position 0, skip it; if not found (end == -1), use all data
         final end = data.lastIndexOf(0x00);
-        final slice = end > 0 ? data.sublist(0, end) : data;
+        Uint8List slice;
+        if (end == -1) {
+          // No null terminator found, use all data
+          slice = data;
+        } else if (end == 0) {
+          // Null byte at start, skip it
+          slice = data.length > 1 ? data.sublist(1) : Uint8List(0);
+        } else {
+          // Null byte found, slice up to it (excluding the null)
+          slice = data.sublist(0, end);
+        }
         final values = <String, dynamic>{
           'stepsTotal': null,
           'caloriesTotalKcal': null,
@@ -2030,84 +2023,46 @@ class Hc20Client {
       required int mm,
       required int dd}) async {
     // Acquire mutex to serialize historical data retrieval operations
-    await _acquireHistoryMutex();
+    // Sensor disable/enable is handled by the mutex system
+    await _acquireHistoryMutex(device: d);
     
     try {
-      // Temporarily disable sensors before historical data retrieval to prevent packet loss
-      bool sensorsWereEnabled = _sensorsEnabled;
-      if (sensorsWereEnabled) {
-        try {
-          await _temporarilyDisableSensors(d);
-        } catch (e) {
-          Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to disable sensors before reading packet status: $e');
-          // Continue anyway - packet status read may still work
-        }
-      }
-
-      try {
-        // Use history message parser; data begins with: 0xFD, type, yy, mm, dd, then statuses
-        final msg = await _readHistoryMessage(d,
-            dataType: 0xFD,
-            yy: yy,
-            mm: mm,
-            dd: dd,
-            index: 0,
-            requestedType: dataType);
-        final rd = msg.data;
-        // statuses start after 5 bytes (fd + type + 3B date)
-        if (rd.length <= 5) return '';
-        return base64.encode(rd.sublist(5));
-      } finally {
-        // Always restore sensors after packet status read completes
-        try {
-          await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
-        } catch (e) {
-          Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after reading packet status: $e');
-          // Don't throw - packet status read succeeded, sensor restoration can be retried
-        }
-      }
+      // Use history message parser; data begins with: 0xFD, type, yy, mm, dd, then statuses
+      final msg = await _readHistoryMessage(d,
+          dataType: 0xFD,
+          yy: yy,
+          mm: mm,
+          dd: dd,
+          index: 0,
+          requestedType: dataType);
+      final rd = msg.data;
+      // statuses start after 5 bytes (fd + type + 3B date)
+      if (rd.length <= 5) return '';
+      return base64.encode(rd.sublist(5));
     } finally {
       // Always release mutex, even if operation fails
+      // Sensor restoration happens in _releaseHistoryMutex when queue is empty
       _releaseHistoryMutex();
     }
   }
 
   Future<String> readStorageInfo(Hc20Device d) async {
     // Acquire mutex to serialize historical data retrieval operations
-    await _acquireHistoryMutex();
+    // Sensor disable/enable is handled by the mutex system
+    await _acquireHistoryMutex(device: d);
     
     try {
-      // Temporarily disable sensors before historical data retrieval to prevent packet loss
-      bool sensorsWereEnabled = _sensorsEnabled;
-      if (sensorsWereEnabled) {
-        try {
-          await _temporarilyDisableSensors(d);
-        } catch (e) {
-          Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to disable sensors before reading storage info: $e');
-          // Continue anyway - storage info read may still work
-        }
-      }
-
-      try {
-        final msg = await _readHistoryMessage(d,
-            dataType: 0xFE, yy: 0, mm: 0, dd: 0, index: 0);
-        final rd = msg.data; // starts with 0xFE then JSON + 0x00
-        if (rd.isEmpty) return '';
-        final start = 1;
-        final end = rd.lastIndexOf(0x00);
-        final slice = end > start ? rd.sublist(start, end) : rd.sublist(start);
-        return utf8.decode(slice);
-      } finally {
-        // Always restore sensors after storage info read completes
-        try {
-          await _restoreSensors(d, shouldRestore: sensorsWereEnabled);
-        } catch (e) {
-          Hc20CloudConfig.debugPrint('[HC20Client] Warning: Failed to restore sensors after reading storage info: $e');
-          // Don't throw - storage info read succeeded, sensor restoration can be retried
-        }
-      }
+      final msg = await _readHistoryMessage(d,
+          dataType: 0xFE, yy: 0, mm: 0, dd: 0, index: 0);
+      final rd = msg.data; // starts with 0xFE then JSON + 0x00
+      if (rd.isEmpty) return '';
+      final start = 1;
+      final end = rd.lastIndexOf(0x00);
+      final slice = end > start ? rd.sublist(start, end) : rd.sublist(start);
+      return utf8.decode(slice);
     } finally {
       // Always release mutex, even if operation fails
+      // Sensor restoration happens in _releaseHistoryMutex when queue is empty
       _releaseHistoryMutex();
     }
   }
@@ -2120,7 +2075,8 @@ class Hc20Client {
     // Acquire mutex to serialize historical data retrieval operations
     // Note: This is also called from _readAllHistoryPackets which already has mutex,
     // but we add it here in case this method is called directly
-    await _acquireHistoryMutex();
+    // Sensor disable/enable is handled by the mutex system
+    await _acquireHistoryMutex(device: d);
     
     try {
       final msg = await _readHistoryMessage(d,
@@ -2266,22 +2222,54 @@ class Hc20Client {
       int? requestedType}) async {
     final completer = Completer<Hc20MsgHistory>();
     late StreamSubscription sub;
+    
+    // ✅ FIXED: Filter notifications to only listen for history responses (0x97) and exceptions
+    // This prevents 0xB0 sensor streaming notifications from being incorrectly parsed as errors
+    // History request (0x17) expects response (0x97), exceptions have 0x40 bit set
     sub = _tx
-        .notificationsParsed(d.id)
-        .where((m) => m is Hc20MsgHistory)
-        .cast<Hc20MsgHistory>()
-        .where((m) =>
-            m.type == dataType &&
-            m.yy == yy &&
-            m.mm == mm &&
-            m.dd == dd &&
-            m.index == index)
+        .notifications(d.id)
+        .where((f) => f.func == 0x97 || (f.func & 0x40) != 0)  // Only history responses (0x97) or exceptions
+        .map((f) => Hc20ResponseParser.parse(f))  // Parse only relevant frames
         .listen((m) {
-      sub.cancel();
-      completer.complete(m);
+      // Check if it's an exception message
+      if (m is Hc20MsgException) {
+        sub.cancel();
+        // Convert exception to Hc20Exception and throw it
+        final exception = Hc20Exception(m.code, m.msg);
+        if (!completer.isCompleted) {
+          completer.completeError(exception);
+        }
+        return;
+      }
+      
+      // Check if it's the expected history message
+      if (m is Hc20MsgHistory) {
+        final msg = m;
+        // For 0xFD and 0xFE, we don't check date/index matching
+        if (dataType == 0xFD || dataType == 0xFE) {
+          if (msg.type == dataType) {
+            sub.cancel();
+            completer.complete(msg);
+            return;
+          }
+        } else {
+          // For regular data types, check type and index match
+          // Note: Device may return a different date than requested (e.g., if data spans days)
+          // We accept the response if type and index match - the device knows the correct date
+          // The SDK will use the device's returned date when decoding the data
+          if (msg.type == dataType && msg.index == index) {
+            // Accept response if type and index match, regardless of date
+            // The device may return data for a slightly different date (e.g., if packet spans midnight)
+            sub.cancel();
+            completer.complete(msg);
+            return;
+          }
+        }
+      }
     }, onError: (e) {
       if (!completer.isCompleted) completer.completeError(e);
     });
+    
     List<int> payload;
     if (dataType == 0xFD) {
       final t = requestedType ?? 0;
@@ -2296,7 +2284,18 @@ class Hc20Client {
         await _tx.request(d.id, 0x17, payload);
       } catch (_) {}
     }();
-    return completer.future;
+    
+    // Add timeout to prevent waiting forever
+    return completer.future.timeout(
+      const Duration(seconds: 30),
+      onTimeout: () {
+        sub.cancel();
+        if (!completer.isCompleted) {
+          completer.completeError(Hc20Exception(0xC0, 'History request timeout for type=0x${dataType.toRadixString(16)} date=$yy-$mm-$dd index=$index'));
+        }
+        throw Hc20Exception(0xC0, 'History request timeout');
+      },
+    );
   }
 
   String _payloadJsonString(List<int> payload, {required int leading}) {

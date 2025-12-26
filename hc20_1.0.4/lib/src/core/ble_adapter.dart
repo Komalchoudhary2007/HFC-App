@@ -66,13 +66,6 @@ class Hc20BleAdapter {
                 : d.manufacturerData.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
             final services = d.serviceUuids.map((u) => u.toString()).join(', ');
             
-            if (hasManufacturerData || hasService) {
-              // Log accepted devices
-              //Hc20CloudConfig.debugPrint('HC20 SCAN DEBUG: ✅ ACCEPTED device id=${d.id} name=${d.name} mfr=[$mfrHex] services=[$services] hasMfr=$hasManufacturerData hasSvc=$hasService');
-            } else {
-              // Log filtered devices
-              //Hc20CloudConfig.debugPrint('HC20 SCAN DEBUG: ❌ FILTERED device id=${d.id} name=${d.name} mfr=[$mfrHex] services=[$services]');
-            }
           }
           
           // Accept if either manufacturer data matches OR service UUID matches
