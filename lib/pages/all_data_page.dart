@@ -296,70 +296,60 @@ class _AllDataPageState extends State<AllDataPage> {
       final dd = now.day;
       final dateStr = '${now.year}-${mm.toString().padLeft(2, '0')}-${dd.toString().padLeft(2, '0')}';
 
-     
+      print('🚀 Starting historical data retrieval for date: $dateStr (yy=$yy, mm=$mm, dd=$dd)');
+      
+      // Process each data type sequentially in the requested order:
+      // 1. HRV, 2. HRV2, 3. Temperature, 4. RRI, then the rest
+      
+      // HRV data (Priority 1)
+      print('📊 [1/11] Processing HRV data...');
       try {
-        _heartData = await _fetchDataTypeWithAllChecks(
-          'Heart',
-          0x01,
+        _hrvData = await _fetchDataTypeWithAllChecks(
+          'HRV',
+          0x08,
           yy, mm, dd, dateStr,
-          () => widget.client.getAllDayHeartRows(widget.device, yy: yy, mm: mm, dd: dd),
+          () => widget.client.getAllDayHrvRows(widget.device, yy: yy, mm: mm, dd: dd),
         );
       } catch (e, stackTrace) {
-        print('❌ [FATAL ERROR] Heart data failed: $e');
+        print('❌ [FATAL ERROR] HRV data failed: $e');
         print('Stack trace: $stackTrace');
-        _dataErrors['Heart'] = _handleError(e, dateStr);
-        _heartData = null;
+        _dataErrors['HRV'] = _handleError(e, dateStr);
+        _hrvData = null;
       }
       
-      // Steps data
-      print('📊 [2/11] Processing Steps data...');
+      // HRV2 data (Priority 2)
+      print('📊 [2/11] Processing HRV2 data...');
       try {
-        _stepsData = await _fetchDataTypeWithAllChecks(
-          'Steps',
-          0x02,
+        _hrv2Data = await _fetchDataTypeWithAllChecks(
+          'HRV2',
+          0x0C,
           yy, mm, dd, dateStr,
-          () => widget.client.getAllDayStepsRows(widget.device, yy: yy, mm: mm, dd: dd),
+          () => widget.client.getAllDayHrv2Rows(widget.device, yy: yy, mm: mm, dd: dd),
         );
       } catch (e, stackTrace) {
-        print('❌ [FATAL ERROR] Heart data failed: $e');
+        print('❌ [FATAL ERROR] HRV2 data failed: $e');
         print('Stack trace: $stackTrace');
-        _dataErrors['Heart'] = _handleError(e, dateStr);
-        _heartData = null;
+        _dataErrors['HRV2'] = _handleError(e, dateStr);
+        _hrv2Data = null;
       }
       
-      // Steps data
-      print('📊 [2/11] Processing Steps data...');
+      // Temperature data (Priority 3)
+      print('📊 [3/11] Processing Temperature data...');
       try {
-        _stepsData = await _fetchDataTypeWithAllChecks(
-          'Steps',
-          0x02,
+        _temperatureData = await _fetchDataTypeWithAllChecks(
+          'Temperature',
+          0x05,
           yy, mm, dd, dateStr,
-          () => widget.client.getAllDayStepsRows(widget.device, yy: yy, mm: mm, dd: dd),
+          () => widget.client.getAllDayTemperatureRows(widget.device, yy: yy, mm: mm, dd: dd),
         );
       } catch (e, stackTrace) {
-        print('❌ [FATAL ERROR] Steps data failed: $e');
+        print('❌ [FATAL ERROR] Temperature data failed: $e');
         print('Stack trace: $stackTrace');
-        _dataErrors['Steps'] = _handleError(e, dateStr);
-        _stepsData = null;
+        _dataErrors['Temperature'] = _handleError(e, dateStr);
+        _temperatureData = null;
       }
       
-      // SpO2 data
-      print('📊 [3/11] Processing SpO2 data...');
-      try {
-        _spo2Data = await _fetchDataTypeWithAllChecks(
-          'SpO2',
-          0x03,
-          yy, mm, dd, dateStr,
-          () => widget.client.getAllDaySpo2Rows(widget.device, yy: yy, mm: mm, dd: dd),
-        );
-      } catch (e, stackTrace) {
-        print('❌ [FATAL ERROR] SpO2 data failed: $e');
-        print('Stack trace: $stackTrace');
-        _dataErrors['SpO2'] = _handleError(e, dateStr);
-        _spo2Data = null;
-      }
-      
-      // RRI data
+      // RRI data (Priority 4)
       print('📊 [4/11] Processing RRI data...');
       try {
         _rriData = await _fetchDataTypeWithAllChecks(
@@ -375,24 +365,56 @@ class _AllDataPageState extends State<AllDataPage> {
         _rriData = null;
       }
       
-      // Temperature data
-      print('📊 [5/11] Processing Temperature data...');
+      // Heart data
+      print('📊 [5/11] Processing Heart data...');
       try {
-        _temperatureData = await _fetchDataTypeWithAllChecks(
-          'Temperature',
-          0x05,
+        _heartData = await _fetchDataTypeWithAllChecks(
+          'Heart',
+          0x01,
           yy, mm, dd, dateStr,
-          () => widget.client.getAllDayTemperatureRows(widget.device, yy: yy, mm: mm, dd: dd),
+          () => widget.client.getAllDayHeartRows(widget.device, yy: yy, mm: mm, dd: dd),
         );
       } catch (e, stackTrace) {
-        print('❌ [FATAL ERROR] Temperature data failed: $e');
+        print('❌ [FATAL ERROR] Heart data failed: $e');
         print('Stack trace: $stackTrace');
-        _dataErrors['Temperature'] = _handleError(e, dateStr);
-        _temperatureData = null;
+        _dataErrors['Heart'] = _handleError(e, dateStr);
+        _heartData = null;
+      }
+      
+      // Steps data
+      print('📊 [6/11] Processing Steps data...');
+      try {
+        _stepsData = await _fetchDataTypeWithAllChecks(
+          'Steps',
+          0x02,
+          yy, mm, dd, dateStr,
+          () => widget.client.getAllDayStepsRows(widget.device, yy: yy, mm: mm, dd: dd),
+        );
+      } catch (e, stackTrace) {
+        print('❌ [FATAL ERROR] Steps data failed: $e');
+        print('Stack trace: $stackTrace');
+        _dataErrors['Steps'] = _handleError(e, dateStr);
+        _stepsData = null;
+      }
+      
+      // SpO2 data
+      print('📊 [7/11] Processing SpO2 data...');
+      try {
+        _spo2Data = await _fetchDataTypeWithAllChecks(
+          'SpO2',
+          0x03,
+          yy, mm, dd, dateStr,
+          () => widget.client.getAllDaySpo2Rows(widget.device, yy: yy, mm: mm, dd: dd),
+        );
+      } catch (e, stackTrace) {
+        print('❌ [FATAL ERROR] SpO2 data failed: $e');
+        print('Stack trace: $stackTrace');
+        _dataErrors['SpO2'] = _handleError(e, dateStr);
+        _spo2Data = null;
       }
       
       // Baro data
-      print('📊 [6/11] Processing Baro data...');
+      print('📊 [8/11] Processing Baro data...');
       try {
         _baroData = await _fetchDataTypeWithAllChecks(
           'Baro',
@@ -408,7 +430,7 @@ class _AllDataPageState extends State<AllDataPage> {
       }
       
       // BP data
-      print('📊 [7/11] Processing BP data...');
+      print('📊 [9/11] Processing BP data...');
       try {
         _bpData = await _fetchDataTypeWithAllChecks(
           'BP',
@@ -423,24 +445,8 @@ class _AllDataPageState extends State<AllDataPage> {
         _bpData = null;
       }
       
-      // HRV data
-      print('📊 [8/11] Processing HRV data...');
-      try {
-        _hrvData = await _fetchDataTypeWithAllChecks(
-          'HRV',
-          0x08,
-          yy, mm, dd, dateStr,
-          () => widget.client.getAllDayHrvRows(widget.device, yy: yy, mm: mm, dd: dd),
-        );
-      } catch (e, stackTrace) {
-        print('❌ [FATAL ERROR] HRV data failed: $e');
-        print('Stack trace: $stackTrace');
-        _dataErrors['HRV'] = _handleError(e, dateStr);
-        _hrvData = null;
-      }
-      
       // Calories data
-      print('📊 [9/11] Processing Calories data...');
+      print('📊 [10/11] Processing Calories data...');
       try {
         _caloriesData = await _fetchDataTypeWithAllChecks(
           'Calories',
@@ -453,22 +459,6 @@ class _AllDataPageState extends State<AllDataPage> {
         print('Stack trace: $stackTrace');
         _dataErrors['Calories'] = _handleError(e, dateStr);
         _caloriesData = null;
-      }
-      
-      // HRV2 data
-      print('📊 [10/11] Processing HRV2 data...');
-      try {
-        _hrv2Data = await _fetchDataTypeWithAllChecks(
-          'HRV2',
-          0x0C,
-          yy, mm, dd, dateStr,
-          () => widget.client.getAllDayHrv2Rows(widget.device, yy: yy, mm: mm, dd: dd),
-        );
-      } catch (e, stackTrace) {
-        print('❌ [FATAL ERROR] HRV2 data failed: $e');
-        print('Stack trace: $stackTrace');
-        _dataErrors['HRV2'] = _handleError(e, dateStr);
-        _hrv2Data = null;
       }
 
       // Sleep data (no packet status check)
