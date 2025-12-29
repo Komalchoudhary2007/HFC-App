@@ -129,12 +129,13 @@ class _AllDataPageState extends State<AllDataPage> {
 
       print('📊 [AllDataPage] Loading HRV data for $dateStr...');
       
-      _hrvData = await _loadDataWithChecks(
-        'HRV',
-        0x08, // HRV data type
-        () => widget.client.getAllDayHrvRows(widget.device, yy: yy, mm: mm, dd: dd),
-        yy, mm, dd, dateStr,
-      );
+      try {
+        _hrvData = await widget.client.getAllDayHrvRows(widget.device, yy: yy, mm: mm, dd: dd);
+        print('✓ HRV data loaded: ${_hrvData?.length ?? 0} records');
+      } catch (e) {
+        print('❌ Error loading HRV data: $e');
+        _hrvData = [];
+      }
 
       if (mounted) {
         setState(() {

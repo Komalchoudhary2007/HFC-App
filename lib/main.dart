@@ -73,6 +73,7 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
   bool _isReconnecting = false;
   int _reconnectAttempts = 0;
   static const int _maxReconnectAttempts = 3;
+  bool _isBatteryOptimizationDisabled = false; // Track battery optimization status
 
   @override
   void initState() {
@@ -80,7 +81,7 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     WidgetsBinding.instance.addObserver(this);
     _initializeDio();
     _enableBackgroundExecution();
-    _requestBatteryOptimizationExemption();
+    _checkAndShowBatteryOptimizationDialog();
     // Note: HC20 client will be initialized when user clicks scan button
   }
   
@@ -95,23 +96,165 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     }
   }
   
-  // Request exemption from battery optimization
-  Future<void> _requestBatteryOptimizationExemption() async {
+  // Check and show battery optimization permission dialog
+  Future<void> _checkAndShowBatteryOptimizationDialog() async {
     try {
       const platform = MethodChannel('com.hfc.app/background');
       
       // Check if already disabled
       final isDisabled = await platform.invokeMethod('isBatteryOptimizationDisabled');
       
+      setState(() {
+        _isBatteryOptimizationDisabled = isDisabled;
+      });
+      
       if (isDisabled) {
         print('✅ Battery optimization already disabled');
+        setState(() {
+          _statusMessage = '✅ Ready to scan for devices';
+        });
       } else {
-        print('⚠️ Battery optimization is enabled - requesting exemption...');
-        await platform.invokeMethod('requestBatteryOptimizationExemption');
-        print('✅ Battery optimization exemption dialog shown to user');
+        print('⚠️ Battery optimization is enabled - showing permission dialog...');
+        setState(() {
+          _statusMessage = '⚠️ Battery optimization permission required';
+        });
+        
+        // Show custom permission dialog
+        Future.delayed(Duration(milliseconds: 500), () {
+          _showBatteryOptimizationPermissionDialog();
+        });
       }
     } catch (e) {
+      print('⚠️ Could not check battery optimization: $e');
+    }
+  }
+  
+  // Show custom permission dialog
+  void _showBatteryOptimizationPermissionDialog() {
+    if (!mounted) return;
+    
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Row(
+            children: [
+              Icon(Icons.battery_alert, color: Colors.orange, size: 28),
+              SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Allow Battery Optimization',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'This app needs unrestricted battery access to work properly in background.',
+                style: TextStyle(fontSize: 15, height: 1.4),
+              ),
+              SizedBox(height: 16),
+              Container(
+                padding: EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.blue.shade200),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.info_outline, color: Colors.blue.shade700, size: 20),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'What happens next:',
+                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.blue.shade900),
+                          ),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: 8),
+                    Text(
+                      '1. Tap "Allow" button below\n2. Find "HFC App" in the list\n3. Select "Don\'t optimize" or "Allow"',
+                      style: TextStyle(fontSize: 13, color: Colors.blue.shade900, height: 1.5),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () async {
+                  Navigator.of(context).pop();
+                  await _requestBatteryOptimizationExemption();
+                },
+                icon: Icon(Icons.battery_charging_full, size: 24),
+                label: Text('Allow Battery Access', style: TextStyle(fontSize: 16)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green,
+                  foregroundColor: Colors.white,
+                  padding: EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+  
+  // Request exemption from battery optimization
+  Future<void> _requestBatteryOptimizationExemption() async {
+    try {
+      const platform = MethodChannel('com.hfc.app/background');
+      
+      print('🔋 Opening battery optimization settings...');
+      await platform.invokeMethod('requestBatteryOptimizationExemption');
+      
+      setState(() {
+        _statusMessage = 'Please disable battery optimization for this app';
+      });
+      
+      // Check again after 3 seconds to see if user made changes
+      await Future.delayed(Duration(seconds: 3));
+      await _checkBatteryOptimizationStatus();
+    } catch (e) {
       print('⚠️ Could not request battery optimization exemption: $e');
+    }
+  }
+  
+  // Check battery optimization status
+  Future<void> _checkBatteryOptimizationStatus() async {
+    try {
+      const platform = MethodChannel('com.hfc.app/background');
+      final isDisabled = await platform.invokeMethod('isBatteryOptimizationDisabled');
+      
+      setState(() {
+        _isBatteryOptimizationDisabled = isDisabled;
+        if (isDisabled) {
+          _statusMessage = '✅ Ready to scan for devices';
+        } else {
+          _statusMessage = '⚠️ Battery optimization must be disabled. Tap "Disable Battery Optimization" button.';
+        }
+      });
+      
+      print(_isBatteryOptimizationDisabled ? '✅ Battery optimization disabled' : '⚠️ Battery optimization still enabled');
+    } catch (e) {
+      print('⚠️ Could not check battery optimization status: $e');
     }
   }
   
@@ -144,6 +287,15 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     switch (state) {
       case AppLifecycleState.resumed:
         print('✅ App resumed - foreground mode');
+        // Recheck battery optimization status when app resumes
+        _checkBatteryOptimizationStatus();
+        
+        // Show dialog again if still not disabled
+        Future.delayed(Duration(seconds: 1), () {
+          if (!_isBatteryOptimizationDisabled && mounted) {
+            _showBatteryOptimizationPermissionDialog();
+          }
+        });
         break;
       case AppLifecycleState.paused:
         print('⏸️ App paused - background mode');
@@ -231,6 +383,42 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
   }
 
   void _startScanning() async {
+    // Check battery optimization first
+    if (!_isBatteryOptimizationDisabled) {
+      await _checkBatteryOptimizationStatus();
+      
+      if (!_isBatteryOptimizationDisabled) {
+        setState(() {
+          _statusMessage = '❌ Cannot scan: Battery optimization must be disabled first!';
+        });
+        
+        // Show dialog
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (BuildContext context) {
+            return AlertDialog(
+              title: Text('⚠️ Battery Optimization Required'),
+              content: Text(
+                'This app requires unrestricted battery access to maintain continuous Bluetooth connection and data sync in background.\n\n'
+                'Please disable battery optimization to continue.'
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () async {
+                    Navigator.of(context).pop();
+                    await _requestBatteryOptimizationExemption();
+                  },
+                  child: Text('Disable Battery Optimization'),
+                ),
+              ],
+            );
+          },
+        );
+        return;
+      }
+    }
+    
     // Initialize client if not already done
     if (_client == null) {
       await _initializeHC20Client();
@@ -1156,6 +1344,63 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
             ),
             
             const SizedBox(height: 16),
+
+            // Battery Optimization Warning (if not disabled)
+            if (!_isBatteryOptimizationDisabled) ...[
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.orange.shade50,
+                  border: Border.all(color: Colors.orange, width: 2),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.battery_alert, color: Colors.orange, size: 32),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '⚠️ Battery Optimization Enabled',
+                                style: TextStyle(
+                                  color: Colors.orange.shade900,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'App requires unrestricted battery access for 24/7 monitoring',
+                                style: TextStyle(
+                                  color: Colors.orange.shade800,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    ElevatedButton.icon(
+                      onPressed: _requestBatteryOptimizationExemption,
+                      icon: Icon(Icons.settings_power),
+                      label: Text('Disable Battery Optimization'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.orange,
+                        foregroundColor: Colors.white,
+                        minimumSize: Size(double.infinity, 48),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
 
             // Cloud Sync Status Banner (Prominent)
             if (_isConnected) ...[
