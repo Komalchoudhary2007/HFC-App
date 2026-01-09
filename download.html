@@ -157,49 +157,46 @@
     <div class="container">
         <div class="logo">📱</div>
         <h1>HFC App - HC20 Integration</h1>
-        <p class="version">Version 1.10.0 (Build 20) - Smart Battery Permission</p>
+        <p class="version">Version 8.0.12 (Build 59) - Timer Persistence Fix</p>
         
         <div class="cloud-sync-badge">
-            🔋 SMART BATTERY PERMISSION POPUP
+            🐛 BUG FIX: WEBHOOK TIMER CONTINUES WHEN DISCONNECTED
         </div>
         
         <div class="feature-list">
-            <h3>✨ New Features in v1.10.0:</h3>
+            <h3>🐛 Critical Bug Fix in v8.0.9:</h3>
             <div class="feature">
-                <span class="feature-icon">🔋</span>
-                <span><strong>Smart Permission Popup:</strong> User-friendly dialog explains why battery access is needed</span>
-            </div>
-            <div class="feature">
-                <span class="feature-icon">📋</span>
-                <span><strong>Step-by-Step Guide:</strong> Clear instructions on how to allow battery optimization</span>
-            </div>
-            <div class="feature">
-                <span class="feature-icon">🔄</span>
-                <span><strong>Auto-Prompt:</strong> Shows popup on app start and when resuming if not allowed</span>
-            </div>
-            <div class="feature">
-                <span class="feature-icon">🛡️</span>
-                <span><strong>Required Permission:</strong> Blocks device scanning until battery access is granted</span>
-            </div>
-            <div class="feature">
-                <span class="feature-icon">⏱️</span>
-                <span><strong>10-Minute Sync:</strong> Optimized data sync interval for battery efficiency</span>
+                <span class="feature-icon">✅</span>
+                <span><strong>Webhook Timer Fix:</strong> Timer now continues running when device disconnects</span>
             </div>
             <div class="feature">
                 <span class="feature-icon">📡</span>
-                <span><strong>Dual Cloud Sync:</strong> Sends to both HFC webhook AND Nitto cloud every 10 minutes</span>
+                <span><strong>Null Value Transmission:</strong> Sends null values every 2 minutes when disconnected</span>
+            </div>
+            <div class="feature">
+                <span class="feature-icon">⏰</span>
+                <span><strong>Continuous Tracking:</strong> Backend receives timestamps even during disconnects</span>
+            </div>
+            <div class="feature">
+                <span class="feature-icon">🔍</span>
+                <span><strong>Error Detection:</strong> Identifies Network vs Device disconnects</span>
+            </div>
+            <h3>✨ Features from v8.0.8:</h3>
+            <div class="feature">
+                <span class="feature-icon">🔄</span>
+                <span><strong>Auto-Reconnect:</strong> Device automatically reconnects when back in Bluetooth range</span>
+            </div>
+            <div class="feature">
+                <span class="feature-icon">🆔</span>
+                <span><strong>Device ID Display:</strong> Shows saved HC20 device ID in menu drawer</span>
+            </div>
+            <div class="feature">
+                <span class="feature-icon">⚡</span>
+                <span><strong>Background Scanner:</strong> Scans for saved device every 30 seconds</span>
             </div>
             <div class="feature">
                 <span class="feature-icon">💓</span>
-                <span><strong>Auto HRV Sync:</strong> Automatic HRV data upload every 6 hours to Nitto Cloud</span>
-            </div>
-            <div class="feature">
-                <span class="feature-icon">🌐</span>
-                <span><strong>24/7 Background:</strong> Continuous monitoring even when app is in background</span>
-            </div>
-            <div class="feature">
-                <span class="feature-icon">🔄</span>
-                <span><strong>Live Updates:</strong> Real-time HR, SpO2, BP, Temperature</span>
+                <span><strong>Real-Time Data:</strong> Live HR, SpO2, BP, Temperature updates</span>
             </div>
         </div>
         
@@ -218,8 +215,9 @@
                 <li>Enable "Install from Unknown Sources" in Settings</li>
                 <li>Tap the downloaded APK file to install</li>
                 <li>Grant Bluetooth and Location permissions</li>
-                <li>Connect your HC20 wearable device</li>
-                <li>Watch the cloud sync indicator light up! ☁️</li>
+                <li>Connect your HC20 wearable device (ID will be saved automatically)</li>
+                <li>Check menu drawer to see saved Device ID</li>
+                <li>Walk away and return - device auto-reconnects! 🔄</li>
             </ol>
         </div>
     </div>

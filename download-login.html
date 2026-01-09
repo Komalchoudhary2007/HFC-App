@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HFC App - Download with Login System</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 600px;
+            width: 100%;
+            padding: 40px;
+            animation: slideUp 0.5s ease-out;
+        }
+        
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .logo {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 20px;
+            margin: 0 auto 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 40px;
+            color: white;
+        }
+        
+        h1 {
+            color: #2d3748;
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+        
+        .version {
+            display: inline-block;
+            background: #48bb78;
+            color: white;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+            margin-top: 10px;
+        }
+        
+        .features {
+            background: #f7fafc;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 25px 0;
+        }
+        
+        .features h3 {
+            color: #2d3748;
+            margin-bottom: 15px;
+            font-size: 18px;
+        }
+        
+        .feature-list {
+            list-style: none;
+        }
+        
+        .feature-list li {
+            padding: 10px 0;
+            color: #4a5568;
+            display: flex;
+            align-items: center;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        
+        .feature-list li:last-child {
+            border-bottom: none;
+        }
+        
+        .feature-list li:before {
+            content: "✓";
+            color: #48bb78;
+            font-weight: bold;
+            font-size: 20px;
+            margin-right: 12px;
+        }
+        
+        .info-box {
+            background: #edf2f7;
+            border-left: 4px solid #4299e1;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        
+        .info-box p {
+            color: #2d3748;
+            line-height: 1.6;
+            margin-bottom: 8px;
+        }
+        
+        .info-box strong {
+            color: #2c5282;
+        }
+        
+        .download-btn {
+            display: block;
+            width: 100%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-decoration: none;
+            padding: 18px;
+            border-radius: 12px;
+            text-align: center;
+            font-size: 18px;
+            font-weight: 600;
+            margin: 25px 0;
+            transition: transform 0.2s, box-shadow 0.2s;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        
+        .download-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+        }
+        
+        .file-info {
+            text-align: center;
+            color: #718096;
+            font-size: 14px;
+            margin-top: 15px;
+        }
+        
+        .credentials {
+            background: #fff5f5;
+            border-left: 4px solid #fc8181;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        
+        .credentials h4 {
+            color: #c53030;
+            margin-bottom: 10px;
+        }
+        
+        .credentials p {
+            color: #742a2a;
+            line-height: 1.6;
+            font-family: 'Courier New', monospace;
+        }
+        
+        .warning {
+            background: #fffaf0;
+            border-left: 4px solid #ed8936;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        
+        .warning p {
+            color: #744210;
+            line-height: 1.6;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">🏥</div>
+            <h1>HFC App</h1>
+            <p style="color: #718096;">Health Monitoring with HC20 Wearable</p>
+            <span class="version">v3.3.0 - OTP Response Fixed ✅</span>
+        </div>
+        
+        <div class="info-box">
+            <p><strong>⚠️ IMPORTANT:</strong> If you previously installed an old version, please uninstall it first!</p>
+            <p>Go to Settings → Apps → HFC App → Uninstall, then install this new version.</p>
+        </div>
+        
+        <div class="features">
+            <h3>✨ New Features in This Version</h3>
+            <ul class="feature-list">
+                <li>🔐 OTP-based Authentication (Login & Register)</li>
+                <li>👤 User Profile Management</li>
+                <li>🔒 Secure Token Storage (Encrypted)</li>
+                <li>📱 Device-User Association</li>
+                <li>📊 User-Specific Health Data</li>
+                <li>✅ Terms & Conditions Acceptance</li>
+                <li>💓 Real-time HC20 Health Monitoring</li>
+            </ul>
+        </div>
+        
+        <div class="info-box">
+            <p><strong>📅 Build Date:</strong> January 5, 2026 10:00 UTC</p>
+            <p><strong>📦 Version:</strong> 3.3.0 (Build 36) ✅ WORKING</p>
+            <p><strong>📦 File Size:</strong> 52.8 MB</p>
+            <p><strong>🤖 Android Version:</strong> 5.0+ (API 21+)</p>
+            <p><strong>🔧 Flutter Version:</strong> 3.38.5</p>
+        </div>
+        
+        <a href="/app-release-with-login.apk" class="download-btn" download>
+            📥 Download APK (52.8 MB)
+        </a>
+        
+        <div class="credentials">
+            <h4>🧪 Test Credentials</h4>
+            <p><strong>Phone Number:</strong> 9999999999</p>
+            <p><strong>OTP Code:</strong> 123456</p>
+            <p style="margin-top: 10px; color: #742a2a;">Use these credentials to test the login system</p>
+        </div>
+        
+        <div class="warning">
+            <p><strong>⚠️ Installation Note:</strong> You may need to enable "Install from Unknown Sources" in your Android settings to install this APK.</p>
+        </div>
+        
+        <div class="info-box">
+            <p><strong>🔄 What's New:</strong></p>
+            <p>This version includes the complete authentication system integrated with api.hireforcare.com backend. All health data collected from your HC20 device will be automatically linked to your user account.</p>
+        </div>
+        
+        <div class="file-info">
+            <p>Built with ❤️ for Hire For Care</p>
+            <p style="margin-top: 5px;">Powered by Flutter & HC20 SDK</p>
+        </div>
+    </div>
+</body>
+</html>

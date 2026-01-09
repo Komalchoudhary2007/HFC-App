@@ -1,13 +1,32 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hc20/hc20.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:dio/dio.dart';
+import 'package:provider/provider.dart';
 import 'pages/all_data_page.dart';
+import 'pages/test_notification_page.dart';
+import 'pages/simple_test_page.dart';
+import 'pages/login_page.dart';
+import 'services/auth_service.dart';
+import 'services/api_service.dart';
+import 'services/storage_service.dart';
 
-void main() {
-  runApp(const MyApp());
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // Initialize the AuthService and wait for auth check
+  final authService = AuthService();
+  await Future.delayed(const Duration(seconds: 1));
+  
+  runApp(
+    ChangeNotifierProvider.value(
+      value: authService,
+      child: const MyApp(),
+    ),
+  );
 }
 
 class MyApp extends StatelessWidget {
@@ -21,7 +40,17 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
-      home: const HC20HomePage(title: 'HFC App - HC20 Wearable'),
+      // Use Consumer to listen to auth state changes
+      home: Consumer<AuthService>(
+        builder: (context, authService, child) {
+          // Show login page if not authenticated
+          if (!authService.isAuthenticated) {
+            return const LoginPage();
+          }
+          // Show HC20 home page if authenticated
+          return const HC20HomePage(title: 'HFC App - HC20 Wearable');
+        },
+      ),
     );
   }
 }
@@ -68,12 +97,21 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
   Timer? _dataRefreshTimer;
   Timer? _connectionMonitor;
   Timer? _hrvRefreshTimer;  // Timer for 6-hour HRV refresh
+  Timer? _autoReconnectScanner;  // Timer for auto-reconnect scanning
   DateTime? _lastDataReceived;
+  
+  // Auto-reconnect state
+  String? _savedDeviceId;  // Saved device ID for auto-reconnect
+  bool _isAutoReconnecting = false;
   DateTime? _lastHrvRefresh;  // Track last HRV refresh time
   bool _isReconnecting = false;
   int _reconnectAttempts = 0;
   static const int _maxReconnectAttempts = 3;
   bool _isBatteryOptimizationDisabled = false; // Track battery optimization status
+  
+  // API service for device association
+  final ApiService _apiService = ApiService();
+  bool _isDeviceAssociated = false;
 
   @override
   void initState() {
@@ -82,7 +120,29 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     _initializeDio();
     _enableBackgroundExecution();
     _checkAndShowBatteryOptimizationDialog();
+    _loadSavedDevice();  // Load saved device for auto-reconnect
     // Note: HC20 client will be initialized when user clicks scan button
+  }
+  
+  // Load saved device ID for auto-reconnect
+  Future<void> _loadSavedDevice() async {
+    try {
+      final deviceId = await StorageService().getSavedDeviceId();
+      if (deviceId != null && deviceId.isNotEmpty) {
+        setState(() {
+          _savedDeviceId = deviceId;
+        });
+        print('🔄 Auto-reconnect enabled for device: $deviceId');
+        print('   Will automatically connect when device is nearby');
+        
+        // Start auto-reconnect scanner
+        _startAutoReconnectScanner();
+      } else {
+        print('ℹ️  No saved device found - auto-reconnect disabled');
+      }
+    } catch (e) {
+      print('⚠️ Error loading saved device: $e');
+    }
   }
   
   // Keep app alive in background using platform channel
@@ -183,7 +243,7 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
                     ),
                     SizedBox(height: 8),
                     Text(
-                      '1. Tap "Allow" button below\n2. Find "HFC App" in the list\n3. Select "Don\'t optimize" or "Allow"',
+                      '1. Tap "Allow" button below\n2. Find "HFC App" in the list\n3. Select "No Restriction" or "Allow"',
                       style: TextStyle(fontSize: 13, color: Colors.blue.shade900, height: 1.5),
                     ),
                   ],
@@ -265,6 +325,7 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     _dataRefreshTimer?.cancel();
     _connectionMonitor?.cancel();
     _hrvRefreshTimer?.cancel();
+    _autoReconnectScanner?.cancel();
     _disableBackgroundExecution();
     super.dispose();
   }
@@ -574,6 +635,9 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
         _statusMessage = 'Connected to ${info.name} v${info.version}';
       });
 
+      // Associate device with user account
+      await _associateDeviceWithUser(device);
+
       // Start listening to real-time data
       _startRealtimeDataStream(device);
       
@@ -585,6 +649,9 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
       
       // Background execution enabled via foreground service + wake lock
       print('✓ Data streaming started - webhooks will continue in background');
+      
+      // Save device ID for auto-reconnect
+      await _saveDeviceForAutoReconnect(device.id);
       
       // Reset reconnection counter on successful connection
       _reconnectAttempts = 0;
@@ -621,16 +688,76 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     }
   }
 
+  Future<void> _associateDeviceWithUser(Hc20Device device) async {
+    try {
+      final authService = Provider.of<AuthService>(context, listen: false);
+      final user = authService.currentUser;
+      
+      if (user == null) {
+        print('⚠️ No user logged in, skipping device association');
+        return;
+      }
+      
+      print('🔗 Associating device ${device.id} with user ${user.id}');
+      
+      setState(() {
+        _statusMessage = 'Linking device to your account...';
+      });
+      
+      final response = await _apiService.associateDevice(
+        device.id,
+        user.id,
+        deviceName: device.name,
+      );
+      
+      if (response['success'] == true) {
+        print('✅ Device associated successfully!');
+        print('   Updated ${response['updatedRecords']} records');
+        
+        setState(() {
+          _isDeviceAssociated = true;
+          _statusMessage = 'Device linked! Updated ${response['updatedRecords']} health records';
+        });
+        
+        // Show success message
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('✅ Device linked to ${user.name}\'s account'),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+      } else {
+        print('⚠️ Device association failed: ${response['error']}');
+        setState(() {
+          _statusMessage = 'Warning: Device not linked to account';
+        });
+      }
+    } catch (e) {
+      print('❌ Error associating device: $e');
+      setState(() {
+        _statusMessage = 'Warning: Could not link device to account';
+      });
+    }
+  }
+
   void _startRealtimeDataStream(Hc20Device device) {
-    // Cancel any existing subscription and timer first
+    // Cancel any existing subscription first (but keep the timer running!)
     _realtimeSubscription?.cancel();
-    _dataRefreshTimer?.cancel();
+    
+    // Cancel existing timer before creating new one to avoid duplicates
+    if (_dataRefreshTimer != null) {
+      print('⚠️ Cancelling existing webhook timer before creating new one');
+      _dataRefreshTimer?.cancel();
+    }
     
     print('\n🚀 ========================================');
     print('🚀 Starting real-time data stream for device: ${device.name}');
     print('🚀 Device ID: ${device.id}');
     print('🚀 Webhook URL: $_webhookUrl');
-    print('🚀 Data refresh: Every 600 seconds (10 minutes)');
+    print('🚀 Data refresh: Every 120 seconds (2 minutes)');
     print('🚀 ========================================\n');
     
     // Subscribe and KEEP the subscription reference
@@ -697,23 +824,65 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     );
     
     print('✓ Real-time stream subscription created and stored in _realtimeSubscription');
-    print('✓ Starting periodic timer to request data every 600 seconds (10 minutes)...');
+    print('✓ Creating webhook timer (triggers every 120 seconds)...');
     
-    // Set up periodic timer to trigger data refresh every 600 seconds (10 minutes)
-    // This ensures the HC20 device sends fresh data regularly
-    _dataRefreshTimer = Timer.periodic(const Duration(seconds: 600), (timer) {
-      if (_isConnected && _connectedDevice != null) {
-        print('⏰ [Timer] Requesting fresh data from device...');
-        // Create a temporary subscription to trigger new data request
-        // The data will be received by our main _realtimeSubscription above
-        _client!.realtimeV2(device).listen((_) {}, onError: (_) {});
-      } else {
-        print('⚠️  [Timer] Device disconnected, stopping timer');
-        timer.cancel();
+    // Set up periodic timer to trigger data refresh every 120 seconds (2 minutes)
+    // ALWAYS sends webhooks - connected sends real data, disconnected sends null values
+    // Backend can identify disconnect by null values and timestamp
+    _dataRefreshTimer = Timer.periodic(const Duration(seconds: 120), (timer) async {
+      try {
+        print('\n⏰ ========================================');
+        print('⏰ [Timer] 2-minute webhook timer triggered');
+        print('⏰ Status: ${_isConnected ? "CONNECTED" : "DISCONNECTED"}');
+        print('⏰ ========================================');
+        
+        if (_isConnected && _connectedDevice != null) {
+          print('   ✅ Device connected - requesting fresh data from device...');
+          // Create a temporary subscription to trigger new data request
+          // This will trigger the realtime stream, which sends webhook with actual device data
+          try {
+            _client!.realtimeV2(device).listen(
+              (data) {
+                print('   ✅ Fresh data received, webhook will be sent automatically');
+              }, 
+              onError: (e) {
+                print('   ⚠️ Error requesting fresh data: $e');
+              }
+            );
+          } catch (e) {
+            print('   ⚠️ Error creating realtimeV2 subscription: $e');
+          }
+        } else {
+          print('   ⚠️ Device DISCONNECTED - sending NULL webhook with disconnect reason...');
+          // Check if it's network or device disconnect
+          try {
+            final authService = Provider.of<AuthService>(context, listen: false);
+            final user = authService.currentUser;
+            
+            if (user != null) {
+              // Try to determine disconnect reason
+              bool isNetworkIssue = await _checkNetworkConnectivity();
+              String disconnectReason = isNetworkIssue ? 'Network Disconnect' : 'Device Disconnect';
+              print('   📤 Sending disconnect webhook: $disconnectReason');
+              await _sendDisconnectWebhook(user.phone, reason: disconnectReason);
+              print('   ✅ Disconnect webhook sent successfully');
+            } else {
+              print('   ⚠️ No user found, cannot send disconnect webhook');
+            }
+          } catch (e) {
+            print('   ❌ Error sending disconnect webhook: $e');
+          }
+        }
+        print('⏰ Timer execution completed\n');
+      } catch (e) {
+        print('   ❌ CRITICAL ERROR in timer callback: $e');
+        print('   Stack trace: ${StackTrace.current}');
       }
     });
     
-    print('✓ Webhook will send automatically every 600 seconds (10 minutes)\n');
+    print('✓ Webhook timer active - triggers every 120 seconds (2 minutes)');
+    print('✓ Connected: sends device data | Disconnected: sends null values with error type');
+    print('✓ Backend identifies disconnects by null values and error message\n');
   }
   
   void _startHrvAutoRefresh() {
@@ -877,8 +1046,9 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     print('🧹 Cleaning up connections...');
     _realtimeSubscription?.cancel();
     _realtimeSubscription = null;
-    _dataRefreshTimer?.cancel();
-    _dataRefreshTimer = null;
+    // DON'T cancel _dataRefreshTimer - it should keep running to send null values!
+    // _dataRefreshTimer?.cancel();
+    // _dataRefreshTimer = null;
     _connectionMonitor?.cancel();
     _connectionMonitor = null;
     _hrvRefreshTimer?.cancel();
@@ -913,13 +1083,10 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
   Future<void> _sendDataToWebhook(Hc20Device device, Hc20RealtimeV2 data, {bool isStressAlert = false}) async {
     try {
       final now = DateTime.now();
-      final utcNow = now.toUtc();
       
       // Prepare comprehensive payload with all available data
       final payload = {
-        'timestamp': utcNow.toIso8601String(), // Send UTC timestamp
-        'timestamp_local': now.toIso8601String(), // Also send local time for reference
-        'timezone_offset': now.timeZoneOffset.inMinutes, // Send timezone offset in minutes
+        'timestamp': now.toIso8601String(), // Send local timestamp with timezone (e.g., 2025-12-30T08:00:00.000+05:30)
         'stress_alert': isStressAlert,
         'device': {
           'id': device.id,
@@ -1056,6 +1223,301 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     }
   }
 
+  Future<void> _sendDisconnectWebhook(String phone, {String reason = 'Device Disconnect'}) async {
+    try {
+      final response = await _dio.post(
+        _webhookUrl,
+        data: {
+          'phone': phone,
+          'deviceId': _connectedDevice?.id ?? _savedDeviceId ?? 'unknown',
+          'heartRate': null,
+          'spo2': null,
+          'bloodPressure': null,
+          'temperature': null,
+          'batteryLevel': null,
+          'steps': null,
+          'status': null,
+          'message': reason,
+          'errorType': reason,
+          'timestamp': DateTime.now().toIso8601String(),
+        },
+      );
+      
+      if (response.statusCode == 200) {
+        print('✅ Disconnect webhook sent with null values: $reason');
+      } else {
+        print('❌ Webhook failed: ${response.statusCode}');
+      }
+    } catch (e) {
+      print('❌ Webhook error: $e');
+    }
+  }
+
+  // Check network connectivity to determine disconnect reason
+  Future<bool> _checkNetworkConnectivity() async {
+    try {
+      final result = await _dio.get(
+        'https://api.hireforcare.com/health',
+        options: Options(receiveTimeout: const Duration(seconds: 5)),
+      );
+      return result.statusCode != 200;
+    } catch (e) {
+      // Network error means network disconnect
+      return true;
+    }
+  }
+
+  // Save device ID for auto-reconnect
+  Future<void> _saveDeviceForAutoReconnect(String deviceId) async {
+    try {
+      await StorageService().saveDeviceId(deviceId);
+      setState(() {
+        _savedDeviceId = deviceId;
+      });
+      print('💾 Device ID saved for auto-reconnect: $deviceId');
+      print('   Device will auto-connect when nearby');
+      
+      // Start auto-reconnect scanner if not already running
+      if (_autoReconnectScanner == null || !_autoReconnectScanner!.isActive) {
+        _startAutoReconnectScanner();
+      }
+    } catch (e) {
+      print('⚠️ Error saving device ID: $e');
+    }
+  }
+
+  // Start background scanner for auto-reconnect
+  void _startAutoReconnectScanner() {
+    if (_savedDeviceId == null || _savedDeviceId!.isEmpty) {
+      print('ℹ️  No saved device - auto-reconnect scanner not started');
+      return;
+    }
+
+    // Cancel any existing scanner
+    _autoReconnectScanner?.cancel();
+
+    print('\n🔍 ========================================');
+    print('🔍 Starting Auto-Reconnect Scanner');
+    print('🔍 Target Device: $_savedDeviceId');
+    print('🔍 Scan interval: Every 30 seconds');
+    print('🔍 Auto-connects when device is nearby');
+    print('🔍 ========================================\n');
+
+    // Scan every 30 seconds for the saved device
+    _autoReconnectScanner = Timer.periodic(const Duration(seconds: 30), (timer) async {
+      // Only scan if not already connected and not currently reconnecting
+      if (_isConnected || _isAutoReconnecting || _isScanning) {
+        return;
+      }
+
+      print('⏰ [Auto-Reconnect] Scanning for saved device...');
+      await _scanForSavedDevice();
+    });
+
+    // Do immediate first scan
+    Future.delayed(const Duration(seconds: 2), () {
+      if (!_isConnected && !_isAutoReconnecting) {
+        _scanForSavedDevice();
+      }
+    });
+  }
+
+  // Scan for the saved device and auto-connect if found
+  Future<void> _scanForSavedDevice() async {
+    if (_savedDeviceId == null || _isConnected || _isAutoReconnecting) {
+      return;
+    }
+
+    // Initialize client if needed
+    if (_client == null) {
+      await _initializeHC20Client();
+      if (_client == null) {
+        print('⚠️ [Auto-Reconnect] Failed to initialize HC20 client');
+        return;
+      }
+    }
+
+    setState(() {
+      _isAutoReconnecting = true;
+    });
+
+    print('🔍 [Auto-Reconnect] Scanning for device: $_savedDeviceId');
+
+    try {
+      Hc20Device? foundDevice;
+      
+      // Listen for scanned devices
+      final subscription = _client!.scan().listen(
+        (device) {
+          if (device.id == _savedDeviceId && foundDevice == null) {
+            foundDevice = device;
+            print('✅ [Auto-Reconnect] Found saved device: ${device.name} ($_savedDeviceId)');
+          }
+        },
+        onError: (error) {
+          print('⚠️ [Auto-Reconnect] Scan error: $error');
+        },
+      );
+
+      // Wait 10 seconds for scan
+      await Future.delayed(const Duration(seconds: 10));
+      subscription.cancel();
+
+      // If device found, connect to it
+      if (foundDevice != null) {
+        print('🔌 [Auto-Reconnect] Connecting to saved device...');
+        setState(() {
+          _statusMessage = '🔄 Auto-connecting to ${foundDevice!.name}...';
+        });
+        await _connectToDevice(foundDevice!);
+      } else {
+        print('ℹ️  [Auto-Reconnect] Saved device not found nearby');
+      }
+    } catch (e) {
+      print('⚠️ [Auto-Reconnect] Error: $e');
+    } finally {
+      setState(() {
+        _isAutoReconnecting = false;
+      });
+    }
+  }
+
+  Future<void> _sendTestNotification() async {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final user = authService.currentUser;
+    
+    if (user == null) {
+      setState(() {
+        _statusMessage = 'Error: Please login first';
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('❌ Please login first to send notifications'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+    
+    if (_connectedDevice == null) {
+      setState(() {
+        _statusMessage = 'Error: Please connect to a device first';
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('❌ Please connect to a device first'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
+    
+    setState(() {
+      _statusMessage = 'Sending test notification...';
+    });
+    
+    try {
+      print('📱 ========================================');
+      print('📱 Sending test disconnect notification');
+      print('📱 User: ${user.name}');
+      print('📱 Phone: ${user.phone}');
+      print('📱 Device: ${_connectedDevice!.name} (${_connectedDevice!.id})');
+      print('📱 ========================================');
+      
+      final response = await _apiService.sendDisconnectNotification(
+        phone: user.phone,
+        deviceId: _connectedDevice!.id,
+        deviceName: _connectedDevice!.name,
+      );
+      
+      if (response['success'] == true) {
+        setState(() {
+          _statusMessage = '✅ Test notification sent to ${user.phone}!';
+        });
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('✅ WhatsApp notification sent to ${user.phone}'),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+        
+        print('✅ Notification sent successfully');
+      } else {
+        final errorMsg = response['error'] ?? 'Unknown error';
+        
+        setState(() {
+          _statusMessage = '❌ Failed: $errorMsg';
+        });
+        
+        if (mounted) {
+          // Check if it's an auth error
+          if (errorMsg.toLowerCase().contains('auth') || 
+              errorMsg.toLowerCase().contains('token') ||
+              errorMsg.toLowerCase().contains('login')) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('❌ Authentication Error'),
+                    SizedBox(height: 4),
+                    Text('Please LOGOUT and LOGIN again', style: TextStyle(fontWeight: FontWeight.bold)),
+                    SizedBox(height: 4),
+                    Text('Your session may have expired', style: TextStyle(fontSize: 12)),
+                  ],
+                ),
+                backgroundColor: Colors.red,
+                duration: const Duration(seconds: 5),
+                action: SnackBarAction(
+                  label: 'LOGOUT',
+                  textColor: Colors.white,
+                  onPressed: () async {
+                    await authService.logout();
+                  },
+                ),
+              ),
+            );
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('❌ Failed: $errorMsg'),
+                backgroundColor: Colors.red,
+                duration: const Duration(seconds: 3),
+              ),
+            );
+          }
+        }
+        
+        print('❌ Notification failed: ${response['error']}');
+      }
+    } catch (e) {
+      setState(() {
+        _statusMessage = '❌ Error sending notification: $e';
+      });
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Error: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+      
+      print('❌ Error: $e');
+    }
+  }
+
   Future<void> _testWebhook() async {
     setState(() {
       _statusMessage = 'Testing webhook connection...';
@@ -1063,13 +1525,10 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     
     try {
       final now = DateTime.now();
-      final utcNow = now.toUtc();
       
       final testPayload = {
         'test': true,
-        'timestamp': utcNow.toIso8601String(), // Send UTC timestamp
-        'timestamp_local': now.toIso8601String(), // Also send local time for reference
-        'timezone_offset': now.timeZoneOffset.inMinutes, // Send timezone offset in minutes
+        'timestamp': now.toIso8601String(), // Send local timestamp with timezone
         'message': 'Test connection from HFC App',
         'device': {'id': 'test-device', 'name': 'Test Device'},
       };
@@ -1304,10 +1763,384 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
 
   @override
   Widget build(BuildContext context) {
+    print('🏠🏠🏠 HC20HomePage build() called - user should see giant orange button! 🏠🏠🏠');
+    final authService = Provider.of<AuthService>(context);
+    final user = authService.currentUser;
+    print('👤 User logged in: ${user != null} - Name: ${user?.name ?? "NOT LOGGED IN"}');
+    
     return Scaffold(
+      drawer: Drawer(
+        child: ListView(
+          padding: EdgeInsets.zero,
+          children: [
+            DrawerHeader(
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.inversePrimary,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  const Icon(Icons.medical_services, size: 48, color: Colors.white),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'HFC App',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  if (user != null)
+                    Text(
+                      user.name,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 14,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            // Test Notification Menu Item - BRIGHT ORANGE
+            Container(
+              color: Colors.orange.shade100,
+              child: ListTile(
+                leading: const Icon(Icons.notifications_active, color: Colors.orange, size: 32),
+                title: const Text(
+                  'Test WhatsApp Notification',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
+                ),
+                subtitle: const Text('Send test disconnect alert'),
+                trailing: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.orange,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Text(
+                    'NEW',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                onTap: () {
+                  Navigator.pop(context); // Close drawer
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => TestNotificationPage(
+                        deviceId: _connectedDevice?.id,
+                        deviceName: _connectedDevice?.name,
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+            const Divider(thickness: 2),
+            // Debug Info Section - Auth Token Status
+            Container(
+              color: Colors.blue.shade50,
+              padding: const EdgeInsets.all(12),
+              child: FutureBuilder<String?>(
+                future: StorageService().getToken(),
+                builder: (context, snapshot) {
+                  final hasToken = snapshot.hasData && snapshot.data != null && snapshot.data!.isNotEmpty;
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            hasToken ? Icons.check_circle : Icons.error,
+                            color: hasToken ? Colors.green : Colors.red,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          const Text(
+                            'Auth Status',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      if (hasToken) ...[
+                        Text(
+                          '✅ Token Saved',
+                          style: TextStyle(
+                            color: Colors.green.shade700,
+                            fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Token: ${snapshot.data!.substring(0, min(20, snapshot.data!.length))}...',
+                          style: TextStyle(
+                            color: Colors.grey.shade600,
+                            fontSize: 10,
+                            fontFamily: 'monospace',
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Length: ${snapshot.data!.length} chars',
+                          style: TextStyle(
+                            color: Colors.grey.shade600,
+                            fontSize: 10,
+                          ),
+                        ),
+                      ] else ...[
+                        Text(
+                          '❌ No Token Found',
+                          style: TextStyle(
+                            color: Colors.red.shade700,
+                            fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Please logout and login again',
+                          style: TextStyle(
+                            color: Colors.grey.shade600,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ],
+                  );
+                },
+              ),
+            ),
+            const Divider(thickness: 2),
+            // Device ID Status
+            Container(
+              color: Colors.green.shade50,
+              padding: const EdgeInsets.all(12),
+              child: FutureBuilder<String?>(
+                future: StorageService().getSavedDeviceId(),
+                builder: (context, snapshot) {
+                  final hasDeviceId = snapshot.hasData && snapshot.data != null && snapshot.data!.isNotEmpty;
+                  
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            hasDeviceId ? Icons.bluetooth_connected : Icons.bluetooth_disabled,
+                            color: hasDeviceId ? Colors.green : Colors.grey,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          const Text(
+                            'Saved Device',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      if (hasDeviceId) ...[
+                        Text(
+                          '✅ Device ID Saved',
+                          style: TextStyle(
+                            color: Colors.green.shade700,
+                            fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'ID: ${snapshot.data}',
+                          style: TextStyle(
+                            color: Colors.grey.shade700,
+                            fontSize: 11,
+                            fontFamily: 'monospace',
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Auto-reconnect: Enabled',
+                          style: TextStyle(
+                            color: Colors.green.shade600,
+                            fontSize: 10,
+                          ),
+                        ),
+                      ] else ...[
+                        Text(
+                          '⚠️ No Device Saved',
+                          style: TextStyle(
+                            color: Colors.orange.shade700,
+                            fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Connect to a device first',
+                          style: TextStyle(
+                            color: Colors.grey.shade600,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ],
+                  );
+                },
+              ),
+            ),
+            const Divider(thickness: 2),
+            if (user != null)
+              ListTile(
+                leading: const Icon(Icons.logout, color: Colors.red),
+                title: const Text('Logout'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  if (_isConnected) {
+                    await _disconnect();
+                  }
+                  final authService = Provider.of<AuthService>(context, listen: false);
+                  await authService.logout();
+                },
+              ),
+          ],
+        ),
+      ),
+      floatingActionButton: (user != null && _connectedDevice != null)
+          ? FloatingActionButton.extended(
+              onPressed: _sendTestNotification,
+              backgroundColor: Colors.orange,
+              icon: const Icon(Icons.send),
+              label: const Text('Test Notify'),
+              tooltip: 'Send Test WhatsApp Notification',
+            )
+          : null,
       appBar: AppBar(
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         title: Text(widget.title),
+        actions: [
+          // User info and logout button
+          if (user != null)
+            PopupMenuButton<String>(
+              icon: CircleAvatar(
+                backgroundColor: Colors.white,
+                child: Text(
+                  user.name[0].toUpperCase(),
+                  style: TextStyle(
+                    color: Theme.of(context).primaryColor,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              tooltip: user.name,
+              onSelected: (value) async {
+                if (value == 'logout') {
+                  // Disconnect device first if connected
+                  if (_isConnected) {
+                    await _disconnect();
+                  }
+                  
+                  // Show confirmation dialog
+                  final confirm = await showDialog<bool>(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      title: const Text('Logout'),
+                      content: const Text('Are you sure you want to logout?'),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context, false),
+                          child: const Text('Cancel'),
+                        ),
+                        ElevatedButton(
+                          onPressed: () => Navigator.pop(context, true),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.red,
+                          ),
+                          child: const Text('Logout'),
+                        ),
+                      ],
+                    ),
+                  );
+                  
+                  if (confirm == true) {
+                    await authService.logout();
+                  }
+                } else if (value == 'profile') {
+                  // Refresh profile
+                  await authService.refreshProfile();
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Profile refreshed')),
+                    );
+                  }
+                }
+              },
+              itemBuilder: (context) => [
+                PopupMenuItem(
+                  enabled: false,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        user.name,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        user.phone,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                      if (user.email != null)
+                        Text(
+                          user.email!,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const PopupMenuDivider(),
+                const PopupMenuItem(
+                  value: 'profile',
+                  child: Row(
+                    children: [
+                      Icon(Icons.refresh),
+                      SizedBox(width: 8),
+                      Text('Refresh Profile'),
+                    ],
+                  ),
+                ),
+                const PopupMenuItem(
+                  value: 'logout',
+                  child: Row(
+                    children: [
+                      Icon(Icons.logout, color: Colors.red),
+                      SizedBox(width: 8),
+                      Text('Logout', style: TextStyle(color: Colors.red)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
@@ -1326,6 +2159,34 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
                     const SizedBox(height: 8),
+                    // Login status indicator
+                    if (user != null) ...[
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.green.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.green, width: 2),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.check_circle, color: Colors.green, size: 20),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                '✓ Logged in as ${user.name} (Login saved)',
+                                style: TextStyle(
+                                  color: Colors.green.shade800,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
                     Text(_statusMessage),
                     const SizedBox(height: 8),
                     Row(
@@ -1338,6 +2199,26 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
                         Text(_isConnected ? 'Connected' : 'Disconnected'),
                       ],
                     ),
+                    if (_isConnected && _isDeviceAssociated) ...[
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.link,
+                            color: Colors.green,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Device linked to your account',
+                            style: TextStyle(
+                              color: Colors.green[700],
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ),

@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HFC App - Download APK</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 600px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            animation: slideIn 0.5s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .app-icon {
+            width: 100px;
+            height: 100px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 20px;
+            margin: 0 auto 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 48px;
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);
+        }
+
+        h1 {
+            color: #333;
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+
+        .version {
+            color: #666;
+            font-size: 14px;
+            background: #f0f0f0;
+            padding: 5px 15px;
+            border-radius: 20px;
+            display: inline-block;
+        }
+
+        .info-section {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 15px;
+            margin: 20px 0;
+        }
+
+        .info-section h3 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 18px;
+        }
+
+        .feature-list {
+            list-style: none;
+            padding: 0;
+        }
+
+        .feature-list li {
+            padding: 8px 0;
+            color: #555;
+            display: flex;
+            align-items: center;
+        }
+
+        .feature-list li:before {
+            content: "✓";
+            color: #667eea;
+            font-weight: bold;
+            margin-right: 10px;
+            font-size: 18px;
+        }
+
+        .download-btn {
+            display: block;
+            width: 100%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 18px;
+            border: none;
+            border-radius: 15px;
+            font-size: 18px;
+            font-weight: bold;
+            cursor: pointer;
+            text-decoration: none;
+            text-align: center;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin: 20px 0;
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .download-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px rgba(102, 126, 234, 0.6);
+        }
+
+        .download-btn:active {
+            transform: translateY(0);
+        }
+
+        .warning {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+
+        .warning-title {
+            color: #856404;
+            font-weight: bold;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+        }
+
+        .warning-title:before {
+            content: "⚠️";
+            margin-right: 8px;
+        }
+
+        .warning-text {
+            color: #856404;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        .test-credentials {
+            background: #e7f3ff;
+            border-left: 4px solid #2196F3;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+
+        .test-credentials h4 {
+            color: #1976d2;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+        }
+
+        .test-credentials h4:before {
+            content: "🔑";
+            margin-right: 8px;
+        }
+
+        .credential-item {
+            background: white;
+            padding: 10px;
+            border-radius: 8px;
+            margin: 8px 0;
+            font-family: 'Courier New', monospace;
+            color: #1976d2;
+            font-weight: bold;
+        }
+
+        .file-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 10px 0;
+            font-size: 14px;
+        }
+
+        .file-info span {
+            color: #666;
+        }
+
+        .file-info strong {
+            color: #333;
+        }
+
+        .footer {
+            text-align: center;
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+            color: #999;
+            font-size: 14px;
+        }
+
+        .steps {
+            counter-reset: step-counter;
+            list-style: none;
+        }
+
+        .steps li {
+            counter-increment: step-counter;
+            padding: 12px 0 12px 40px;
+            position: relative;
+            color: #555;
+            line-height: 1.6;
+        }
+
+        .steps li:before {
+            content: counter(step-counter);
+            position: absolute;
+            left: 0;
+            top: 8px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 14px;
+        }
+
+        @media (max-width: 600px) {
+            .container {
+                padding: 30px 20px;
+            }
+
+            h1 {
+                font-size: 24px;
+            }
+
+            .app-icon {
+                width: 80px;
+                height: 80px;
+                font-size: 40px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="app-icon">⌚</div>
+            <h1>HFC App - HC20 Integration</h1>
+            <span class="version">Version 1.10.1 (Build 22) - With Login System ✅</span>
+        </div>
+
+        <div class="info-section" style="background: #d4edda; border-left: 4px solid #28a745;">
+            <div style="color: #155724; font-weight: bold; margin-bottom: 10px; display: flex; align-items: center;">
+                <span style="font-size: 24px; margin-right: 10px;">🎉</span>
+                <span>Fresh Build - January 5, 2026</span>
+            </div>
+            <div style="color: #155724;">
+                <strong>✅ This APK includes the complete login system!</strong>
+                <br><br>
+                Built today with all new features:
+                <ul style="margin: 10px 0; padding-left: 20px;">
+                    <li>OTP-based phone authentication</li>
+                    <li>User registration & profiles</li>
+                    <li>Secure JWT token storage</li>
+                    <li>Device-user association</li>
+                    <li>Logout functionality</li>
+                </ul>
+            </div>
+        </div>
+
+        <a href="/app-release.apk" class="download-btn" download="HFC-App-v1.10.1-with-login.apk">
+            📥 Download APK (23 MB)
+        </a>
+
+        <div class="file-info">
+            <span>📦 File Size:</span>
+            <strong>23.0 MB</strong>
+        </div>
+        
+        <div class="file-info">
+            <span>📅 Build Date:</span>
+            <strong>January 5, 2026 @ 13:44 UTC</strong>
+        </div>
+
+        <div class="info-section">
+            <h3>📱 Installation Steps</h3>
+            <ol class="steps">
+                <li>Download the APK file</li>
+                <li>Open the downloaded file on your Android device</li>
+                <li>Enable "Install from Unknown Sources" if prompted</li>
+                <li>Follow the on-screen instructions to install</li>
+                <li>Grant required permissions (Bluetooth, Location)</li>
+            </ol>
+        </div>
+
+        <div class="info-section">
+            <h3>✨ All Features (Complete Build)</h3>
+            <ul class="feature-list">
+                <li><strong>OTP Authentication</strong> - Secure phone login</li>
+                <li><strong>User Registration</strong> - Create your account</li>
+                <li><strong>User Profile</strong> - Manage your info</li>
+                <li><strong>Device Association</strong> - Link HC20 to your account</li>
+                <li><strong>HC20 Connection</strong> - Bluetooth pairing</li>
+                <li><strong>Real-time Monitoring</strong> - Heart Rate, SpO2, BP, Temp</li>
+                <li><strong>Background Streaming</strong> - Continuous data upload</li>
+                <li><strong>6-hour HRV Refresh</strong> - Automatic data sync</li>
+                <li><strong>Historical Data</strong> - View past records</li>
+                <li><strong>Logout Function</strong> - Secure sign out</li>
+            </ul>
+        </div>
+
+        <div class="test-credentials">
+            <h4>Test Credentials (Use These!)</h4>
+            <div class="credential-item">Phone: 9999999999</div>
+            <div class="credential-item">OTP: 123456</div>
+            <p style="margin-top: 10px; color: #1976d2; font-size: 13px;">
+                ✅ Use these credentials to test the login system!
+            </p>
+        </div>
+
+        <div class="info-section">
+            <h3>🎯 First Time Setup</h3>
+            <ol class="steps">
+                <li>Download & install the APK</li>
+                <li><strong>Login page will appear</strong> (not HC20 page)</li>
+                <li>Enter phone: <strong>9999999999</strong></li>
+                <li>Click "Send OTP"</li>
+                <li>Enter OTP: <strong>123456</strong></li>
+                <li>Click "Verify OTP & Login"</li>
+                <li>✅ You're logged in! Now connect HC20 device</li>
+            </ol>
+        </div>
+
+        <div class="info-section">
+            <h3>🔗 Device Association</h3>
+            <p style="margin-bottom: 10px; color: #555;">After logging in:</p>
+            <ol class="steps">
+                <li>Click "Start Scanning" for HC20 devices</li>
+                <li>Select your device from the list</li>
+                <li>Device connects automatically</li>
+                <li>✅ Device links to your account</li>
+                <li>Green checkmark appears: "Device linked to your account"</li>
+                <li>Health data starts streaming!</li>
+            </ol>
+        </div>
+
+        <div class="footer">
+            <p>© 2026 HFC App - HC20 Integration</p>
+            <p style="margin-top: 5px;">Made with ❤️ for health monitoring</p>
+        </div>
+    </div>
+
+    <script>
+        // Track download
+        document.querySelector('.download-btn').addEventListener('click', function() {
+            console.log('APK download started');
+            
+            // Show a toast notification
+            const toast = document.createElement('div');
+            toast.innerHTML = '✅ Download started! Check your downloads folder.';
+            toast.style.cssText = `
+                position: fixed;
+                bottom: 20px;
+                right: 20px;
+                background: #4CAF50;
+                color: white;
+                padding: 15px 25px;
+                border-radius: 10px;
+                box-shadow: 0 5px 20px rgba(0,0,0,0.3);
+                z-index: 1000;
+                animation: slideInRight 0.5s ease-out;
+            `;
+            document.body.appendChild(toast);
+            
+            setTimeout(() => {
+                toast.style.animation = 'slideOutRight 0.5s ease-out';
+                setTimeout(() => toast.remove(), 500);
+            }, 3000);
+        });
+    </script>
+</body>
+</html>
