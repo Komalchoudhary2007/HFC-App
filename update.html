@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HFC App - Update Available</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 700px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            text-align: center;
+        }
+        
+        .update-icon {
+            font-size: 80px;
+            margin-bottom: 20px;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 32px;
+        }
+        
+        .version-badge {
+            display: inline-block;
+            background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+            color: white;
+            padding: 8px 20px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 14px;
+            margin: 10px 0 20px;
+        }
+        
+        .update-info {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 24px;
+            margin: 30px 0;
+            text-align: left;
+        }
+        
+        .update-section {
+            margin-bottom: 24px;
+        }
+        
+        .update-section:last-child {
+            margin-bottom: 0;
+        }
+        
+        .update-section h3 {
+            color: #333;
+            margin-bottom: 12px;
+            font-size: 18px;
+            display: flex;
+            align-items: center;
+        }
+        
+        .update-section h3::before {
+            content: "✨";
+            margin-right: 8px;
+            font-size: 20px;
+        }
+        
+        .new-features, .improvements, .bug-fixes {
+            list-style: none;
+            padding: 0;
+        }
+        
+        .new-features li, .improvements li, .bug-fixes li {
+            padding: 10px 0;
+            padding-left: 30px;
+            position: relative;
+            color: #555;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        
+        .new-features li::before {
+            content: "🆕";
+            position: absolute;
+            left: 0;
+        }
+        
+        .improvements li::before {
+            content: "🔧";
+            position: absolute;
+            left: 0;
+        }
+        
+        .bug-fixes li::before {
+            content: "🐛";
+            position: absolute;
+            left: 0;
+        }
+        
+        .download-section {
+            margin-top: 30px;
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        
+        .download-btn {
+            background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+            color: white;
+            border: none;
+            padding: 16px 48px;
+            font-size: 18px;
+            font-weight: 600;
+            border-radius: 50px;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-block;
+            transition: transform 0.2s, box-shadow 0.2s;
+            box-shadow: 0 4px 15px rgba(76, 175, 80, 0.4);
+        }
+        
+        .download-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(76, 175, 80, 0.6);
+        }
+        
+        .secondary-btn {
+            background: white;
+            color: #4CAF50;
+            border: 2px solid #4CAF50;
+        }
+        
+        .secondary-btn:hover {
+            background: #f1f8f4;
+        }
+        
+        .version-comparison {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 16px;
+            margin: 20px 0;
+            text-align: left;
+            border-radius: 8px;
+        }
+        
+        .version-comparison table {
+            width: 100%;
+            margin-top: 12px;
+            font-size: 14px;
+        }
+        
+        .version-comparison td {
+            padding: 8px;
+            border-bottom: 1px solid #f0e6c8;
+        }
+        
+        .version-comparison td:first-child {
+            font-weight: 600;
+            color: #856404;
+        }
+        
+        .old-version {
+            color: #dc3545;
+        }
+        
+        .new-version {
+            color: #28a745;
+            font-weight: 600;
+        }
+        
+        .install-steps {
+            background: #e7f3ff;
+            border-left: 4px solid #2196F3;
+            padding: 16px;
+            margin-top: 30px;
+            text-align: left;
+            border-radius: 8px;
+        }
+        
+        .install-steps h4 {
+            color: #1565c0;
+            margin-bottom: 12px;
+            font-size: 16px;
+        }
+        
+        .install-steps ol {
+            margin-left: 20px;
+            color: #1976d2;
+            font-size: 14px;
+            line-height: 1.8;
+        }
+        
+        .file-size {
+            color: #666;
+            font-size: 14px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="update-icon">🔄</div>
+        <h1>Update Available!</h1>
+        <div class="version-badge">Version 8.0.10 (Build 57)</div>
+        <p style="color: #666; margin-bottom: 20px;">Latest Build - January 10, 2026</p>
+        
+        <div class="version-comparison">
+            <h4 style="color: #856404; margin-bottom: 8px;">📊 Version Comparison</h4>
+            <table>
+                <tr>
+                    <td>Current Version:</td>
+                    <td class="old-version">8.0.8 or earlier</td>
+                </tr>
+                <tr>
+                    <td>New Version:</td>
+                    <td class="new-version">8.0.10 (Build 57)</td>
+                </tr>
+                <tr>
+                    <td>Release Date:</td>
+                    <td>January 10, 2026</td>
+                </tr>
+                <tr>
+                    <td>File Size:</td>
+                    <td>51 MB</td>
+                </tr>
+            </table>
+        </div>
+        
+        <div class="update-info">
+            <div class="update-section">
+                <h3>New Features</h3>
+                <ul class="new-features">
+                    <li><strong>Secure Login System:</strong> User authentication with credentials for enhanced security</li>
+                    <li><strong>Enhanced UI:</strong> Improved visual design and user experience</li>
+                    <li><strong>Better Error Handling:</strong> More informative error messages and debugging</li>
+                </ul>
+            </div>
+            
+            <div class="update-section">
+                <h3 style="color: #FF9800;">Critical Bug Fixes</h3>
+                <ul class="bug-fixes">
+                    <li><strong>Webhook Timer Fix:</strong> Timer now continues running when device disconnects (v8.0.9 fix maintained)</li>
+                    <li><strong>Null Value Transmission:</strong> Properly sends null values every 2 minutes during disconnection</li>
+                    <li><strong>Connection Stability:</strong> Improved auto-reconnect reliability</li>
+                    <li><strong>Background Service:</strong> Fixed memory leaks and improved performance</li>
+                </ul>
+            </div>
+            
+            <div class="update-section">
+                <h3 style="color: #2196F3;">Improvements</h3>
+                <ul class="improvements">
+                    <li>Faster device scanning and connection</li>
+                    <li>Optimized battery usage</li>
+                    <li>Better Bluetooth range detection</li>
+                    <li>Enhanced notification system</li>
+                    <li>Improved data synchronization</li>
+                </ul>
+            </div>
+        </div>
+        
+        <div class="download-section">
+            <a href="app-release.apk" class="download-btn" download>
+                📥 Download Update
+            </a>
+            <a href="download.html" class="download-btn secondary-btn">
+                📄 Full Details
+            </a>
+        </div>
+        
+        <p class="file-size">APK Size: 51 MB | Build Date: January 10, 2026</p>
+        
+        <div class="install-steps">
+            <h4>📱 Update Instructions:</h4>
+            <ol>
+                <li><strong>Uninstall old version</strong> (recommended to avoid conflicts)</li>
+                <li><strong>Download the new APK</strong> using the button above</li>
+                <li><strong>Install the APK</strong> - tap the downloaded file</li>
+                <li><strong>Grant permissions</strong> when prompted</li>
+                <li><strong>Login</strong> with your credentials</li>
+                <li><strong>Connect your HC20 device</strong> and start monitoring!</li>
+            </ol>
+            <p style="margin-top: 12px; font-size: 13px; color: #1976d2;">
+                <strong>Note:</strong> Your device ID will be automatically saved after first connection.
+            </p>
+        </div>
+    </div>
+</body>
+</html>

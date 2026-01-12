@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -6,6 +7,7 @@ import 'package:hc20/hc20.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:dio/dio.dart';
 import 'package:provider/provider.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'pages/all_data_page.dart';
 import 'pages/test_notification_page.dart';
 import 'pages/simple_test_page.dart';
@@ -64,13 +66,47 @@ class HC20HomePage extends StatefulWidget {
   State<HC20HomePage> createState() => _HC20HomePageState();
 }
 
+// Connection state enum for better UI representation
+enum ConnectionState { disconnected, connecting, connected, reconnecting, error }
+
+// Connection event for history tracking
+class ConnectionEvent {
+  final DateTime timestamp;
+  final String event; // 'connected', 'disconnected', 'reconnected'
+  final String? reason;
+  final String? deviceId;
+  
+  ConnectionEvent({
+    required this.timestamp,
+    required this.event,
+    this.reason,
+    this.deviceId,
+  });
+  
+  String get formattedTime {
+    final now = DateTime.now();
+    final diff = now.difference(timestamp);
+    
+    if (diff.inMinutes < 1) return '${diff.inSeconds}s ago';
+    if (diff.inHours < 1) return '${diff.inMinutes}m ago';
+    if (diff.inDays < 1) return '${diff.inHours}h ago';
+    return '${diff.inDays}d ago';
+  }
+}
+
 class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver {
   Hc20Client? _client;
   Hc20Device? _connectedDevice;
   bool _isScanning = false;
   bool _isConnected = false;
+  ConnectionState _connectionState = ConnectionState.disconnected;
   List<Hc20Device> _discoveredDevices = [];
   String _statusMessage = 'Click "Start Scanning" to search for HC20 devices';
+  
+  // Bluetooth and Internet status
+  bool _isBluetoothOn = true;
+  bool _isInternetConnected = true;
+  StreamSubscription? _bluetoothStateSubscription;
   
   // Webhook configuration
   late final Dio _dio;
@@ -103,6 +139,7 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
   // Auto-reconnect state
   String? _savedDeviceId;  // Saved device ID for auto-reconnect
   bool _isAutoReconnecting = false;
+  int _consecutiveFailedScans = 0;  // Track consecutive failed scans for device not found notification
   DateTime? _lastHrvRefresh;  // Track last HRV refresh time
   bool _isReconnecting = false;
   int _reconnectAttempts = 0;
@@ -112,14 +149,37 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
   // API service for device association
   final ApiService _apiService = ApiService();
   bool _isDeviceAssociated = false;
+  
+  // Connection history and analytics
+  List<ConnectionEvent> _connectionHistory = [];
+  int _totalDisconnects = 0;
+  int _totalReconnects = 0;
+  DateTime? _lastDisconnectTime;
+  Duration? _longestDisconnectDuration;
+  Map<String, int> _disconnectReasons = {};
+  bool _showConnectionHistory = false;
+  
+  // Low battery warning
+  bool _isLowBattery = false;
+  bool _lowBatteryAlertSent = false;
+  
+  // Internet monitoring timer
+  Timer? _internetMonitorTimer;
+  
+  // Local notifications
+  final FlutterLocalNotificationsPlugin _notificationsPlugin = FlutterLocalNotificationsPlugin();
+  bool _notificationsInitialized = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _initializeDio();
+    _initializeNotifications();
     _enableBackgroundExecution();
     _checkAndShowBatteryOptimizationDialog();
+    _checkBluetoothAndInternetStatus();  // Initial check
+    _startBluetoothAndInternetMonitoring();  // Continuous monitoring
     _loadSavedDevice();  // Load saved device for auto-reconnect
     // Note: HC20 client will be initialized when user clicks scan button
   }
@@ -143,6 +203,336 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     } catch (e) {
       print('⚠️ Error loading saved device: $e');
     }
+  }
+  
+  // Initialize local notifications
+  Future<void> _initializeNotifications() async {
+    try {
+      // Android initialization settings
+      const AndroidInitializationSettings androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+      
+      // iOS initialization settings
+      const DarwinInitializationSettings iosSettings = DarwinInitializationSettings(
+        requestAlertPermission: true,
+        requestBadgePermission: true,
+        requestSoundPermission: true,
+      );
+      
+      const InitializationSettings initSettings = InitializationSettings(
+        android: androidSettings,
+        iOS: iosSettings,
+      );
+      
+      await _notificationsPlugin.initialize(
+        initSettings,
+        onDidReceiveNotificationResponse: (NotificationResponse response) {
+          print('📱 Notification tapped: ${response.payload}');
+        },
+      );
+      
+      // Request Android 13+ notification permission
+      if (Platform.isAndroid) {
+        await _notificationsPlugin
+            .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+            ?.requestNotificationsPermission();
+      }
+      
+      setState(() {
+        _notificationsInitialized = true;
+      });
+      
+      print('✅ Notifications initialized');
+    } catch (e) {
+      print('⚠️ Error initializing notifications: $e');
+    }
+  }
+  
+  // Show device disconnection notification
+  Future<void> _showDisconnectNotification(String reason) async {
+    if (!_notificationsInitialized) return;
+    
+    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+      'device_alerts',
+      'Device Alerts',
+      channelDescription: 'Notifications for device connection issues',
+      importance: Importance.high,
+      priority: Priority.high,
+      icon: '@mipmap/ic_launcher',
+      color: Color(0xFFFF6B6B),
+      playSound: true,
+      enableVibration: true,
+      autoCancel: true,  // Allow tap to dismiss (like internet notification)
+      ongoing: false,  // CRITICAL: Allow swipe to dismiss (like internet notification)
+      styleInformation: BigTextStyleInformation(''),
+    );
+    
+    const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+    
+    const NotificationDetails notificationDetails = NotificationDetails(
+      android: androidDetails,
+      iOS: iosDetails,
+    );
+    
+    String title = '⚠️ Device Disconnected';
+    String body = '';
+    
+    if (reason.contains('Bluetooth')) {
+      title = '📱 Bluetooth Issue';
+      body = 'Please turn on Bluetooth to reconnect your HC20 device';
+    } else if (reason.contains('Out of range') || reason.contains('out of range')) {
+      title = '📍 Device Out of Range';
+      body = 'Move closer to your HC20 device to restore connection';
+    } else if (reason.contains('powered off') || reason.contains('Device powered off')) {
+      title = '🔋 Device Powered Off';
+      body = 'Please turn on your HC20 device to continue monitoring';
+    } else if (reason.contains('Max reconnection')) {
+      title = '🔄 Connection Failed';
+      body = 'Unable to reconnect automatically. Please reconnect manually.';
+    } else {
+      body = 'Your HC20 device has been disconnected. Tap to reconnect.';
+    }
+    
+    await _notificationsPlugin.show(
+      1,
+      title,
+      body,
+      notificationDetails,
+      payload: 'disconnect:$reason',
+    );
+    
+    print('📬 Disconnect notification shown: $title - $body');
+  }
+  
+  // Show network/internet issue notification
+  Future<void> _showNetworkIssueNotification() async {
+    if (!_notificationsInitialized) return;
+    
+    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+      'network_alerts',
+      'Network Alerts',
+      channelDescription: 'Notifications for internet connection issues',
+      importance: Importance.high,
+      priority: Priority.high,
+      icon: '@mipmap/ic_launcher',
+      color: Color(0xFFFFA500),
+      playSound: true,
+      enableVibration: true,
+      styleInformation: BigTextStyleInformation(''),
+    );
+    
+    const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+    
+    const NotificationDetails notificationDetails = NotificationDetails(
+      android: androidDetails,
+      iOS: iosDetails,
+    );
+    
+    await _notificationsPlugin.show(
+      2,
+      '🌐 No Internet Connection',
+      'Unable to monitor your health data. Please check your WiFi or mobile data connection.',
+      notificationDetails,
+      payload: 'network_issue',
+    );
+    
+    print('📬 Network issue notification shown');
+  }
+  
+  // Show low battery notification when device battery is below 20%
+  Future<void> _showLowBatteryNotification(int batteryLevel) async {
+    if (!_notificationsInitialized) return;
+    
+    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+      'battery_alerts',
+      'Battery Alerts',
+      channelDescription: 'Notifications for low device battery',
+      importance: Importance.high,
+      priority: Priority.high,
+      icon: '@mipmap/ic_launcher',
+      color: Color(0xFFFF6B6B),
+      playSound: true,
+      enableVibration: true,
+      styleInformation: BigTextStyleInformation(''),
+    );
+    
+    const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+    
+    const NotificationDetails notificationDetails = NotificationDetails(
+      android: androidDetails,
+      iOS: iosDetails,
+    );
+    
+    await _notificationsPlugin.show(
+      4, // Unique ID for low battery notification
+      '🔋 Low Battery Warning',
+      'HC20 device battery is at $batteryLevel%. Please charge your device soon.',
+      notificationDetails,
+      payload: 'low_battery:$batteryLevel',
+    );
+    
+    print('📬 Low battery notification shown: $batteryLevel%');
+  }
+  
+  // Show device not found notification (after Bluetooth scan)
+  Future<void> _showDeviceNotFoundNotification() async {
+    print('📬 _showDeviceNotFoundNotification called');
+    print('   _notificationsInitialized: $_notificationsInitialized');
+    
+    if (!_notificationsInitialized) {
+      print('⚠️ Notifications not initialized yet, cannot show device not found notification');
+      return;
+    }
+    
+    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+      'device_alerts',
+      'Device Alerts',
+      channelDescription: 'Notifications for device connection issues',
+      importance: Importance.high,
+      priority: Priority.high,
+      icon: '@mipmap/ic_launcher',
+      color: Color(0xFFFFA500),
+      playSound: true,
+      enableVibration: true,
+      autoCancel: true,  // Allow swipe to dismiss
+    );
+    
+    const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+    
+    const NotificationDetails notificationDetails = NotificationDetails(
+      android: androidDetails,
+      iOS: iosDetails,
+    );
+    
+    await _notificationsPlugin.show(
+      5, // Unique ID for device not found notification
+      '📡 Device Not Found',
+      'HC20 device not found nearby. Make sure the device is powered on and within range.',
+      notificationDetails,
+      payload: 'device_not_found',
+    );
+    
+    print('📬 Device not found notification shown');
+  }
+  
+  // Show internet restored notification
+  Future<void> _showInternetRestoredNotification() async {
+    print('📬 _showInternetRestoredNotification called');
+    print('   _notificationsInitialized: $_notificationsInitialized');
+    
+    if (!_notificationsInitialized) {
+      print('⚠️ Notifications not initialized yet, cannot show internet restored notification');
+      return;
+    }
+    
+    // Cancel the network issue notification first
+    print('   Cancelling network issue notification (ID 2)...');
+    await _notificationsPlugin.cancel(2);
+    print('   Network issue notification cancelled');
+    
+    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+      'network_alerts',
+      'Network Alerts',
+      channelDescription: 'Notifications for internet connection status',
+      importance: Importance.defaultImportance,
+      priority: Priority.defaultPriority,
+      icon: '@mipmap/ic_launcher',
+      color: Color(0xFF4CAF50),
+      playSound: false,
+      enableVibration: false,
+      autoCancel: true,  // Allow swipe to dismiss
+    );
+    
+    const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: false,
+      presentSound: false,
+    );
+    
+    const NotificationDetails notificationDetails = NotificationDetails(
+      android: androidDetails,
+      iOS: iosDetails,
+    );
+    
+    await _notificationsPlugin.show(
+      6, // Unique ID for internet restored notification
+      '✅ Internet Restored',
+      'Internet connection is back. Data sync will resume.',
+      notificationDetails,
+      payload: 'internet_restored',
+    );
+    
+    print('📬 Internet restored notification shown');
+  }
+  
+  // Show connection restored notification
+  Future<void> _showConnectionRestoredNotification() async {
+    print('📬 _showConnectionRestoredNotification called');
+    print('   _notificationsInitialized: $_notificationsInitialized');
+    
+    if (!_notificationsInitialized) {
+      print('⚠️ Notifications not initialized yet, cannot show connection restored notification');
+      return;
+    }
+    
+    // Cancel disconnect notifications first
+    print('   Cancelling disconnect notifications (ID 1, 5)...');
+    await _notificationsPlugin.cancel(1);  // Cancel disconnect notification
+    await _notificationsPlugin.cancel(5);  // Cancel device not found notification
+    print('   Disconnect notifications cancelled');
+    
+    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+      'device_alerts',
+      'Device Alerts',
+      channelDescription: 'Notifications for device connection issues',
+      importance: Importance.defaultImportance,
+      priority: Priority.defaultPriority,
+      icon: '@mipmap/ic_launcher',
+      color: Color(0xFF4CAF50),
+      playSound: false,
+      enableVibration: false,
+    );
+    
+    const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: false,
+      presentSound: false,
+    );
+    
+    const NotificationDetails notificationDetails = NotificationDetails(
+      android: androidDetails,
+      iOS: iosDetails,
+    );
+    
+    await _notificationsPlugin.show(
+      3,
+      '✅ Device Connected',
+      'Your HC20 device is now connected and monitoring',
+      notificationDetails,
+      payload: 'connected',
+    );
+    
+    print('📬 Connection restored notification shown');
+  }
+  
+  // Cancel all notifications
+  Future<void> _cancelAllNotifications() async {
+    await _notificationsPlugin.cancelAll();
   }
   
   // Keep app alive in background using platform channel
@@ -318,6 +708,63 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     }
   }
   
+  // Check Bluetooth and Internet status
+  Future<void> _checkBluetoothAndInternetStatus() async {
+    try {
+      // Check Bluetooth status using permission_handler
+      final bluetoothStatus = await Permission.bluetooth.serviceStatus;
+      final isBluetoothEnabled = bluetoothStatus.isEnabled;
+      
+      // Check Internet connectivity with multiple endpoints for reliability
+      bool hasInternet = await _checkInternetConnectivity();
+      
+      // Track previous states to detect changes
+      final wasBluetoothOn = _isBluetoothOn;
+      final wasInternetConnected = _isInternetConnected;
+      
+      setState(() {
+        _isBluetoothOn = isBluetoothEnabled;
+        _isInternetConnected = hasInternet;
+      });
+      
+      print('📱 Bluetooth: ${_isBluetoothOn ? "ON" : "OFF"} | Internet: ${_isInternetConnected ? "Connected" : "Disconnected"}');
+      
+      // Show notification when internet goes down
+      if (wasInternetConnected && !_isInternetConnected) {
+        print('🔴 Internet disconnected - showing notification');
+        _showNetworkIssueNotification();
+      }
+      
+      // If Bluetooth is off and device is connected, handle disconnection
+      if (!_isBluetoothOn && _isConnected) {
+        print('❌ Bluetooth turned OFF while connected - handling disconnection');
+        _showDisconnectNotification('Bluetooth Disconnect');
+        setState(() {
+          _isConnected = false;
+          _connectionState = ConnectionState.error;
+          _statusMessage = 'Bluetooth turned off';
+        });
+        _handleDisconnection();
+      }
+    } catch (e) {
+      print('⚠️ Error checking Bluetooth/Internet status: $e');
+    }
+  }
+  
+  // Start continuous Bluetooth and Internet monitoring
+  void _startBluetoothAndInternetMonitoring() {
+    // Cancel existing timer if any
+    _internetMonitorTimer?.cancel();
+    
+    // Check every 15 seconds and store the timer
+    _internetMonitorTimer = Timer.periodic(const Duration(seconds: 15), (timer) {
+      _checkBluetoothAndInternetStatus();
+    });
+    
+    // Also check immediately
+    _checkBluetoothAndInternetStatus();
+  }
+  
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -325,7 +772,9 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     _dataRefreshTimer?.cancel();
     _connectionMonitor?.cancel();
     _hrvRefreshTimer?.cancel();
+    _internetMonitorTimer?.cancel();
     _autoReconnectScanner?.cancel();
+    _bluetoothStateSubscription?.cancel();
     _disableBackgroundExecution();
     super.dispose();
   }
@@ -632,8 +1081,18 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
       setState(() {
         _connectedDevice = device;
         _isConnected = true;
+        _connectionState = ConnectionState.connected;
         _statusMessage = 'Connected to ${info.name} v${info.version}';
       });
+      
+      // Track connection event
+      _addConnectionEvent(
+        event: _connectionHistory.isEmpty ? 'connected' : 'reconnected',
+        deviceId: device.id,
+      );
+      if (_connectionHistory.length > 1) {
+        _totalReconnects++;
+      }
 
       // Associate device with user account
       await _associateDeviceWithUser(device);
@@ -656,6 +1115,9 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
       // Reset reconnection counter on successful connection
       _reconnectAttempts = 0;
       _isReconnecting = false;
+      
+      // Show connection success notification
+      _showConnectionRestoredNotification();
 
     } catch (e) {
       print('❌ Connection error: $e');
@@ -731,15 +1193,15 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
         }
       } else {
         print('⚠️ Device association failed: ${response['error']}');
-        setState(() {
-          _statusMessage = 'Warning: Device not linked to account';
-        });
+        // Don't show warning in status - user will see it's not linked in UI
+        // Avoid overwriting connection success message with warning
+        print('⚠️ Device not linked - user can link later');
       }
     } catch (e) {
       print('❌ Error associating device: $e');
-      setState(() {
-        _statusMessage = 'Warning: Could not link device to account';
-      });
+      // Don't show warning for network errors - this would confuse users
+      // The device is still connected and working, just association failed
+      print('⚠️ Device association network error - will retry later');
     }
   }
 
@@ -757,7 +1219,7 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     print('🚀 Starting real-time data stream for device: ${device.name}');
     print('🚀 Device ID: ${device.id}');
     print('🚀 Webhook URL: $_webhookUrl');
-    print('🚀 Data refresh: Every 120 seconds (2 minutes)');
+    print('🚀 Data refresh: Every 600 seconds (10 minutes)');
     print('🚀 ========================================\n');
     
     // Subscribe and KEEP the subscription reference
@@ -778,7 +1240,22 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
           if (data.temperature != null && data.temperature!.isNotEmpty) {
             _temperature = data.temperature![0] / 100.0;
           }
-          if (data.battery != null) _batteryLevel = data.battery!.percent;
+          if (data.battery != null) {
+            _batteryLevel = data.battery!.percent;
+            
+            // Check for low battery warning (20% threshold)
+            if (_batteryLevel! <= 20 && !_isLowBattery) {
+              _isLowBattery = true;
+              _lowBatteryAlertSent = false;
+              print('⚠️ LOW DEVICE BATTERY DETECTED: ${_batteryLevel}%');
+              // Show low battery notification on mobile
+              _showLowBatteryNotification(_batteryLevel!);
+            } else if (_batteryLevel! > 20 && _isLowBattery) {
+              _isLowBattery = false;
+              _lowBatteryAlertSent = false;
+            }
+          }
+          
           if (data.basicData != null && data.basicData!.isNotEmpty) {
             _steps = data.basicData![0];
           }
@@ -792,6 +1269,17 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
           setState(() {
             _statusMessage = 'Stress alert sent with fresh data!';
           });
+        } else if (_isLowBattery && !_lowBatteryAlertSent) {
+          // Send low battery alert for device
+          print('🔋 Low device battery detected - sending LOW BATTERY webhook');
+          _lowBatteryAlertSent = true;
+          _sendDataToWebhook(device, data, isLowBattery: true);
+          setState(() {
+            _statusMessage = 'Low battery alert sent! Device: $_batteryLevel%';
+          });
+        } else if (!_isLowBattery && _lowBatteryAlertSent) {
+          // Reset flag when battery is OK
+          _lowBatteryAlertSent = false;
         } else {
           // Send regular webhook (non-blocking)
           print('📤 Sending regular webhook at $_webhookUrl...');
@@ -804,6 +1292,13 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
         print('❌ Device may have disconnected or gone out of range');
         print('❌ ========================================\n');
         
+        // FIX GAP #2: Update _isConnected flag immediately
+        setState(() {
+          _isConnected = false;
+          _connectionState = ConnectionState.error;
+          _statusMessage = 'Connection lost: $error';
+        });
+        
         // Handle disconnection
         if (error.toString().contains('disconnected') || 
             error.toString().contains('connection') ||
@@ -811,10 +1306,6 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
           print('🔄 Device disconnected - attempting reconnection...');
           _handleDisconnection();
         }
-        
-        setState(() {
-          _statusMessage = 'Connection lost: $error';
-        });
       },
       onDone: () {
         print('\n✅ ========================================');
@@ -824,12 +1315,12 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     );
     
     print('✓ Real-time stream subscription created and stored in _realtimeSubscription');
-    print('✓ Creating webhook timer (triggers every 120 seconds)...');
+    print('✓ Creating webhook timer (triggers every 600 seconds)...');
     
-    // Set up periodic timer to trigger data refresh every 120 seconds (2 minutes)
+    // Set up periodic timer to trigger data refresh every 600 seconds (10 minutes)
     // ALWAYS sends webhooks - connected sends real data, disconnected sends null values
     // Backend can identify disconnect by null values and timestamp
-    _dataRefreshTimer = Timer.periodic(const Duration(seconds: 120), (timer) async {
+    _dataRefreshTimer = Timer.periodic(const Duration(seconds: 600), (timer) async {
       try {
         print('\n⏰ ========================================');
         print('⏰ [Timer] 2-minute webhook timer triggered');
@@ -880,7 +1371,7 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
       }
     });
     
-    print('✓ Webhook timer active - triggers every 120 seconds (2 minutes)');
+    print('✓ Webhook timer active - triggers every 600 seconds (10 minutes)');
     print('✓ Connected: sends device data | Disconnected: sends null values with error type');
     print('✓ Backend identifies disconnects by null values and error message\n');
   }
@@ -962,27 +1453,75 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
   
   void _startConnectionMonitoring() {
     print('🔍 Starting connection monitoring (checking every 30 seconds)...');
+    print('🔍 Disconnect detection: 300s (5 min) = 2.5x webhook interval');
+    print('🔍 Active connection ping + timestamp check for reliability\n');
     
     _connectionMonitor?.cancel();
-    _connectionMonitor = Timer.periodic(const Duration(seconds: 30), (timer) {
-      if (!_isConnected || _connectedDevice == null) {
-        print('⚠️ [Monitor] Not connected, stopping monitor');
+    _connectionMonitor = Timer.periodic(const Duration(seconds: 30), (timer) async {
+      // FIX GAP #7: Keep monitoring even when disconnected to facilitate auto-reconnect
+      if (_connectedDevice == null) {
+        print('⚠️ [Monitor] No device configured, stopping monitor');
         timer.cancel();
         return;
       }
       
+      // Skip active checks if not connected (let auto-reconnect handle it)
+      if (!_isConnected) {
+        print('🔍 [Monitor] Device disconnected, auto-reconnect will handle');
+        return;
+      }
+      
+      // FIX GAP #3: Active connection check - ping device to verify connection
+      try {
+        if (_client != null && _connectedDevice != null) {
+          print('🔍 [Monitor] Pinging device to verify connection...');
+          
+          // Try to read battery info as a lightweight connection check
+          final batteryFuture = _client!.readDeviceInfo(_connectedDevice!).timeout(
+            const Duration(seconds: 5),
+          );
+          
+          await batteryFuture;
+          print('✅ [Monitor] Connection alive - device responding');
+        }
+      } catch (e) {
+        print('❌ [Monitor] Active connection check FAILED: $e');
+        print('❌ [Monitor] Device not responding - likely disconnected');
+        
+        setState(() {
+          _isConnected = false;
+          _connectionState = ConnectionState.error;
+          _statusMessage = 'Device not responding';
+        });
+        
+        _handleDisconnection();
+        return;
+      }
+      
+      // FIX GAP #1: Backup timestamp check - reduced from 720s to 300s (5 minutes)
       final now = DateTime.now();
       if (_lastDataReceived != null) {
         final timeSinceLastData = now.difference(_lastDataReceived!).inSeconds;
         print('🔍 [Monitor] Last data received: ${timeSinceLastData}s ago');
         
-        // If no data for 720 seconds (12 minutes), device might be disconnected
-        // This is 120 seconds longer than the 10-minute data interval to allow for delays
-        if (timeSinceLastData > 720) {
-          print('⚠️ [Monitor] No data for ${timeSinceLastData}s - device may be disconnected');
+        // Disconnect after 300 seconds (5 minutes = 2.5x the 2-minute webhook interval)
+        // This allows for 1 missed webhook (240s) plus buffer
+        if (timeSinceLastData > 300) {
+          print('❌ [Monitor] No data for ${timeSinceLastData}s (>${300}s threshold)');
+          print('❌ [Monitor] Device disconnected - triggering reconnection');
+          
+          setState(() {
+            _isConnected = false;
+            _connectionState = ConnectionState.error;
+            _statusMessage = 'No data received for 5 minutes';
+          });
+          
           _handleDisconnection();
-        } else if (timeSinceLastData > 660) {
-          print('⏰ [Monitor] Data slightly delayed (${timeSinceLastData}s), but within tolerance');
+        } else if (timeSinceLastData > 240) {
+          print('⏰ [Monitor] Data delayed (${timeSinceLastData}s), but within tolerance');
+          setState(() {
+            _statusMessage = 'Data delayed (${timeSinceLastData}s)...';
+          });
         }
       }
     });
@@ -994,11 +1533,29 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
       return;
     }
     
+    // Show disconnect notification on first disconnect attempt
+    if (_reconnectAttempts == 0) {
+      _showDisconnectNotification('Device disconnected - attempting to reconnect');
+    }
+    
     if (_reconnectAttempts >= _maxReconnectAttempts) {
       print('❌ Max reconnection attempts reached. Please reconnect manually.');
+      
+      // Track disconnect event
+      _addConnectionEvent(
+        event: 'disconnected',
+        reason: 'Max reconnection attempts reached',
+        deviceId: _connectedDevice?.id,
+      );
+      _totalDisconnects++;
+      
+      // Show notification
+      _showDisconnectNotification('Max reconnection attempts reached');
+      
       setState(() {
         _statusMessage = 'Device disconnected. Please reconnect manually.';
         _isConnected = false;
+        _connectionState = ConnectionState.error;
       });
       _cleanup();
       return;
@@ -1010,6 +1567,7 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     print('🔄 Reconnection attempt $_reconnectAttempts/$_maxReconnectAttempts...');
     
     setState(() {
+      _connectionState = ConnectionState.reconnecting;
       _statusMessage = 'Reconnecting... (Attempt $_reconnectAttempts/$_maxReconnectAttempts)';
     });
     
@@ -1080,14 +1638,28 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     _client!.realtimeV2(_connectedDevice!).listen((_) {}, onError: (_) {}).cancel();
   }
   
-  Future<void> _sendDataToWebhook(Hc20Device device, Hc20RealtimeV2 data, {bool isStressAlert = false}) async {
+  Future<void> _sendDataToWebhook(Hc20Device device, Hc20RealtimeV2 data, {bool isStressAlert = false, bool isLowBattery = false}) async {
     try {
       final now = DateTime.now();
       
+      // Check internet status right before sending (more accurate)
+      final currentInternetStatus = await _checkInternetConnectivity();
+      
       // Prepare comprehensive payload with all available data
       final payload = {
+        'isStressAlert': isStressAlert,
         'timestamp': now.toIso8601String(), // Send local timestamp with timezone (e.g., 2025-12-30T08:00:00.000+05:30)
-        'stress_alert': isStressAlert,
+        
+        // Status fields
+        'status': 'Connected',
+        'bluetoothStatus': _isBluetoothOn ? 'Connected' : 'Disconnected',
+        'internetStatus': currentInternetStatus ? 'Connected' : 'Disconnected',
+        'dataType': 'live',  // vs 'history' or 'disconnect'
+        
+        // Device battery information
+        'deviceBatteryLevel': _batteryLevel,
+        'isDeviceLowBattery': isLowBattery || _isLowBattery,
+        
         'device': {
           'id': device.id,
           'name': device.name,
@@ -1225,21 +1797,28 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
 
   Future<void> _sendDisconnectWebhook(String phone, {String reason = 'Device Disconnect'}) async {
     try {
+      // Check internet status right before sending (more accurate)
+      final currentInternetStatus = await _checkInternetConnectivity();
+      
       final response = await _dio.post(
         _webhookUrl,
         data: {
           'phone': phone,
           'deviceId': _connectedDevice?.id ?? _savedDeviceId ?? 'unknown',
+          'isDisconnected': true,  // CRITICAL FLAG for backend to identify disconnect events
+          'disconnectReason': reason,  // Specific reason (Bluetooth off, out of range, etc.)
           'heartRate': null,
           'spo2': null,
           'bloodPressure': null,
           'temperature': null,
           'batteryLevel': null,
           'steps': null,
-          'status': null,
+          'status': 'DISCONNECTED',  // Explicit status
           'message': reason,
           'errorType': reason,
           'timestamp': DateTime.now().toIso8601String(),
+          'bluetoothStatus': _isBluetoothOn ? 'ON' : 'OFF',
+          'internetStatus': currentInternetStatus ? 'Connected' : 'Disconnected',
         },
       );
       
@@ -1253,18 +1832,43 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     }
   }
 
-  // Check network connectivity to determine disconnect reason
+  // Check network connectivity with multiple endpoints for reliability
   Future<bool> _checkNetworkConnectivity() async {
-    try {
-      final result = await _dio.get(
-        'https://api.hireforcare.com/health',
-        options: Options(receiveTimeout: const Duration(seconds: 5)),
-      );
-      return result.statusCode != 200;
-    } catch (e) {
-      // Network error means network disconnect
-      return true;
+    return await _checkInternetConnectivity();
+  }
+  
+  // Improved internet connectivity check with multiple fallback endpoints
+  Future<bool> _checkInternetConnectivity() async {
+    // List of endpoints to try (in order)
+    final endpoints = [
+      'https://api.hireforcare.com/health',
+      'https://www.google.com',
+      'https://dns.google',
+    ];
+    
+    for (final endpoint in endpoints) {
+      try {
+        final result = await _dio.get(
+          endpoint,
+          options: Options(
+            receiveTimeout: const Duration(seconds: 3),
+            sendTimeout: const Duration(seconds: 3),
+            validateStatus: (status) => status != null && status < 500,
+          ),
+        );
+        if (result.statusCode != null && result.statusCode! < 500) {
+          print('✅ Internet check passed via $endpoint');
+          return true;
+        }
+      } catch (e) {
+        print('⚠️ Internet check failed for $endpoint: $e');
+        continue; // Try next endpoint
+      }
     }
+    
+    // All endpoints failed
+    print('❌ All internet connectivity checks failed');
+    return false;
   }
 
   // Save device ID for auto-reconnect
@@ -1286,6 +1890,126 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     }
   }
 
+  // Add connection event to history
+  void _addConnectionEvent({
+    required String event,
+    String? reason,
+    String? deviceId,
+  }) {
+    final newEvent = ConnectionEvent(
+      timestamp: DateTime.now(),
+      event: event,
+      reason: reason,
+      deviceId: deviceId,
+    );
+    
+    setState(() {
+      _connectionHistory.insert(0, newEvent);
+      
+      // Keep only last 50 events
+      if (_connectionHistory.length > 50) {
+        _connectionHistory = _connectionHistory.sublist(0, 50);
+      }
+      
+      // Track disconnect patterns
+      if (event == 'disconnected' && reason != null) {
+        _disconnectReasons[reason] = (_disconnectReasons[reason] ?? 0) + 1;
+        _lastDisconnectTime = DateTime.now();
+      }
+    });
+    
+    print('📊 [History] Event logged: $event ${reason != null ? "($reason)" : ""}');
+  }
+  
+  // Calculate disconnect analytics
+  Map<String, dynamic> _getDisconnectAnalytics() {
+    final disconnects = _connectionHistory.where((e) => e.event == 'disconnected').toList();
+    
+    if (disconnects.isEmpty) {
+      return {
+        'totalDisconnects': 0,
+        'avgDisconnectDuration': Duration.zero,
+        'mostCommonReason': 'N/A',
+      };
+    }
+    
+    // Calculate average disconnect duration
+    Duration totalDuration = Duration.zero;
+    int durationCount = 0;
+    
+    for (int i = 0; i < disconnects.length; i++) {
+      final disconnect = disconnects[i];
+      // Find next reconnect event
+      final reconnectIndex = _connectionHistory.indexOf(disconnect) - 1;
+      if (reconnectIndex >= 0 && _connectionHistory[reconnectIndex].event == 'reconnected') {
+        final duration = _connectionHistory[reconnectIndex].timestamp.difference(disconnect.timestamp);
+        totalDuration += duration;
+        durationCount++;
+        
+        // Track longest disconnect
+        if (_longestDisconnectDuration == null || duration > _longestDisconnectDuration!) {
+          _longestDisconnectDuration = duration;
+        }
+      }
+    }
+    
+    final avgDuration = durationCount > 0
+        ? totalDuration ~/ durationCount
+        : Duration.zero;
+    
+    // Find most common reason
+    String mostCommonReason = 'Unknown';
+    int maxCount = 0;
+    _disconnectReasons.forEach((reason, count) {
+      if (count > maxCount) {
+        maxCount = count;
+        mostCommonReason = reason;
+      }
+    });
+    
+    return {
+      'totalDisconnects': _totalDisconnects,
+      'totalReconnects': _totalReconnects,
+      'avgDisconnectDuration': avgDuration,
+      'longestDisconnect': _longestDisconnectDuration ?? Duration.zero,
+      'mostCommonReason': mostCommonReason,
+      'reasonCounts': _disconnectReasons,
+    };
+  }
+  
+  // Manual reconnect button handler
+  Future<void> _manualReconnect() async {
+    if (_savedDeviceId == null || _savedDeviceId!.isEmpty) {
+      setState(() {
+        _statusMessage = '⚠️ No saved device. Please scan and connect first.';
+      });
+      return;
+    }
+    
+    if (_isConnected) {
+      setState(() {
+        _statusMessage = 'Already connected to device';
+      });
+      return;
+    }
+    
+    if (_isAutoReconnecting || _isReconnecting) {
+      setState(() {
+        _statusMessage = 'Reconnection already in progress...';
+      });
+      return;
+    }
+    
+    print('🔄 Manual reconnect triggered by user');
+    setState(() {
+      _connectionState = ConnectionState.connecting;
+      _statusMessage = 'Manual reconnect: Scanning for device...';
+      _reconnectAttempts = 0; // Reset attempts for manual reconnect
+    });
+    
+    await _scanForSavedDevice();
+  }
+  
   // Start background scanner for auto-reconnect
   void _startAutoReconnectScanner() {
     if (_savedDeviceId == null || _savedDeviceId!.isEmpty) {
@@ -1365,13 +2089,20 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
 
       // If device found, connect to it
       if (foundDevice != null) {
+        _consecutiveFailedScans = 0;  // Reset counter on successful find
         print('🔌 [Auto-Reconnect] Connecting to saved device...');
         setState(() {
           _statusMessage = '🔄 Auto-connecting to ${foundDevice!.name}...';
         });
         await _connectToDevice(foundDevice!);
       } else {
-        print('ℹ️  [Auto-Reconnect] Saved device not found nearby');
+        _consecutiveFailedScans++;
+        print('ℹ️  [Auto-Reconnect] Saved device not found nearby (attempt $_consecutiveFailedScans)');
+        
+        // Show notification after 3 consecutive failed scans (about 1.5 minutes)
+        if (_consecutiveFailedScans == 3) {
+          _showDeviceNotFoundNotification();
+        }
       }
     } catch (e) {
       print('⚠️ [Auto-Reconnect] Error: $e');
@@ -1603,6 +2334,7 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
       setState(() {
         _connectedDevice = null;
         _isConnected = false;
+        _connectionState = ConnectionState.disconnected;
         _statusMessage = 'Disconnected';
         _reconnectAttempts = 0;
         _isReconnecting = false;
@@ -1757,6 +2489,113 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
             ],
           );
         },
+      );
+    }
+  }
+
+  // Send history data to webhook
+  Future<void> _sendHistoryDataToWebhook() async {
+    if (_client == null || _connectedDevice == null) return;
+
+    try {
+      setState(() {
+        _statusMessage = 'Fetching and sending history data to webhook...';
+      });
+
+      final now = DateTime.now();
+      final authService = Provider.of<AuthService>(context, listen: false);
+      final user = authService.currentUser;
+      
+      // Get today's summary
+      final summaryRows = await _client!.getAllDaySummaryRows(
+        _connectedDevice!,
+        yy: now.year % 100,
+        mm: now.month,
+        dd: now.day,
+      );
+
+      // Get heart rate data
+      final heartRows = await _client!.getAllDayHeartRows(
+        _connectedDevice!,
+        yy: now.year % 100,
+        mm: now.month,
+        dd: now.day,
+      );
+
+      // Get HRV data
+      final hrvRows = await _client!.getAllDayHrvRows(
+        _connectedDevice!,
+        yy: now.year % 100,
+        mm: now.month,
+        dd: now.day,
+      );
+
+      // Prepare history data payload
+      final payload = {
+        'phone': user?.phone ?? 'unknown',
+        'deviceId': _connectedDevice!.id,
+        'deviceName': _connectedDevice!.name,
+        'dataType': 'history',
+        'timestamp': now.toIso8601String(),
+        'date': '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}',
+        'summary': summaryRows.map((row) => row.toString()).toList(),
+        'heartRate': heartRows.map((row) => row.toString()).toList(),
+        'hrv': hrvRows.map((row) => row.toString()).toList(),
+        'recordCounts': {
+          'summary': summaryRows.length,
+          'heartRate': heartRows.length,
+          'hrv': hrvRows.length,
+        },
+      };
+
+      // Send to webhook
+      final response = await _dio.post(
+        _webhookUrl,
+        data: payload,
+        options: Options(
+          headers: {'Content-Type': 'application/json'},
+          sendTimeout: const Duration(seconds: 10),
+          receiveTimeout: const Duration(seconds: 10),
+        ),
+      );
+
+      setState(() {
+        _webhookSuccessCount++;
+        _lastWebhookStatus = '✓ History Sent (${response.statusCode})';
+        _lastWebhookTime = DateTime.now();
+        _statusMessage = 'History data sent! ${summaryRows.length} summary, ${heartRows.length} heart, ${hrvRows.length} HRV records';
+      });
+
+      print('✅ History data sent to webhook successfully');
+
+      // Show success dialog
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('✅ History data sent to webhook (${summaryRows.length + heartRows.length + hrvRows.length} records)'),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+
+    } catch (e) {
+      setState(() {
+        _webhookErrorCount++;
+        _lastWebhookStatus = '✗ History Failed';
+        _lastWebhookError = e.toString();
+        _lastWebhookTime = DateTime.now();
+        _statusMessage = 'Failed to send history data: $e';
+      });
+
+      print('❌ Error sending history data to webhook: $e');
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('❌ Failed to send history data: $e'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 3),
+        ),
       );
     }
   }
@@ -2016,15 +2855,6 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
           ],
         ),
       ),
-      floatingActionButton: (user != null && _connectedDevice != null)
-          ? FloatingActionButton.extended(
-              onPressed: _sendTestNotification,
-              backgroundColor: Colors.orange,
-              icon: const Icon(Icons.send),
-              label: const Text('Test Notify'),
-              tooltip: 'Send Test WhatsApp Notification',
-            )
-          : null,
       appBar: AppBar(
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         title: Text(widget.title),
@@ -2168,35 +2998,234 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(color: Colors.green, width: 2),
                         ),
-                        child: Row(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Icon(Icons.check_circle, color: Colors.green, size: 20),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                '✓ Logged in as ${user.name} (Login saved)',
-                                style: TextStyle(
-                                  color: Colors.green.shade800,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 13,
+                            // Header
+                            Row(
+                              children: [
+                                Icon(Icons.check_circle, color: Colors.green, size: 20),
+                                const SizedBox(width: 8),
+                                Text(
+                                  'Account Connected',
+                                  style: TextStyle(
+                                    color: Colors.green.shade800,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 14,
+                                  ),
                                 ),
-                              ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            // User and Device Info
+                            Row(
+                              children: [
+                                // User Icon and Name
+                                Icon(Icons.person, color: Colors.green.shade700, size: 18),
+                                const SizedBox(width: 6),
+                                Text(
+                                  user.name,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.green.shade900,
+                                  ),
+                                ),
+                                // Divider
+                                if (_savedDeviceId != null) ...[
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                                    child: Text('|', style: TextStyle(color: Colors.grey.shade400)),
+                                  ),
+                                  // Device Icon and ID
+                                  Icon(Icons.watch, color: Colors.blue.shade700, size: 18),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: Text(
+                                      _savedDeviceId!,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontFamily: 'Courier',
+                                        color: Colors.blue.shade900,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
+                              ],
                             ),
                           ],
                         ),
                       ),
                       const SizedBox(height: 8),
                     ],
-                    Text(_statusMessage),
-                    const SizedBox(height: 8),
+                    // Status message with context
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: _connectionState == ConnectionState.connected
+                            ? Colors.green.shade50
+                            : _connectionState == ConnectionState.reconnecting
+                            ? Colors.orange.shade50
+                            : _connectionState == ConnectionState.error
+                            ? Colors.red.shade50
+                            : Colors.grey.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: _connectionState == ConnectionState.connected
+                              ? Colors.green
+                              : _connectionState == ConnectionState.reconnecting
+                              ? Colors.orange
+                              : _connectionState == ConnectionState.error
+                              ? Colors.red
+                              : Colors.grey,
+                          width: 2,
+                        ),
+                      ),
+                      child: Text(
+                        _statusMessage,
+                        style: TextStyle(
+                          color: _connectionState == ConnectionState.connected
+                              ? Colors.green.shade900
+                              : _connectionState == ConnectionState.reconnecting
+                              ? Colors.orange.shade900
+                              : _connectionState == ConnectionState.error
+                              ? Colors.red.shade900
+                              : Colors.grey.shade900,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    // Connection status with icon
                     Row(
                       children: [
                         Icon(
-                          _isConnected ? Icons.bluetooth_connected : Icons.bluetooth_disabled,
-                          color: _isConnected ? Colors.green : Colors.grey,
+                          _connectionState == ConnectionState.connected
+                              ? Icons.bluetooth_connected
+                              : _connectionState == ConnectionState.reconnecting
+                              ? Icons.bluetooth_searching
+                              : _connectionState == ConnectionState.connecting
+                              ? Icons.bluetooth_searching
+                              : Icons.bluetooth_disabled,
+                          color: _connectionState == ConnectionState.connected
+                              ? Colors.green
+                              : _connectionState == ConnectionState.reconnecting
+                              ? Colors.orange
+                              : _connectionState == ConnectionState.connecting
+                              ? Colors.blue
+                              : Colors.grey,
+                          size: 28,
                         ),
                         const SizedBox(width: 8),
-                        Text(_isConnected ? 'Connected' : 'Disconnected'),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _connectionState == ConnectionState.connected
+                                    ? '🟢 Connected'
+                                    : _connectionState == ConnectionState.reconnecting
+                                    ? '🟠 Reconnecting...'
+                                    : _connectionState == ConnectionState.connecting
+                                    ? '🔵 Connecting...'
+                                    : _connectionState == ConnectionState.error
+                                    ? '🔴 Connection Error'
+                                    : '⚪ Disconnected',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                  color: _connectionState == ConnectionState.connected
+                                      ? Colors.green.shade700
+                                      : _connectionState == ConnectionState.reconnecting
+                                      ? Colors.orange.shade700
+                                      : _connectionState == ConnectionState.error
+                                      ? Colors.red.shade700
+                                      : Colors.grey.shade700,
+                                ),
+                              ),
+                              if (_isConnected && _lastDataReceived != null)
+                                Text(
+                                  'Last data: ${DateTime.now().difference(_lastDataReceived!).inSeconds}s ago',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey.shade600,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    // Bluetooth and Internet Status
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: _isBluetoothOn ? Colors.blue.shade50 : Colors.red.shade50,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: _isBluetoothOn ? Colors.blue : Colors.red,
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  _isBluetoothOn ? Icons.bluetooth : Icons.bluetooth_disabled,
+                                  color: _isBluetoothOn ? Colors.blue : Colors.red,
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    _isBluetoothOn ? 'Bluetooth ON' : 'Bluetooth OFF',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                      color: _isBluetoothOn ? Colors.blue.shade900 : Colors.red.shade900,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: _isInternetConnected ? Colors.green.shade50 : Colors.orange.shade50,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: _isInternetConnected ? Colors.green : Colors.orange,
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  _isInternetConnected ? Icons.wifi : Icons.wifi_off,
+                                  color: _isInternetConnected ? Colors.green : Colors.orange,
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    _isInternetConnected ? 'Internet OK' : 'No Internet',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                      color: _isInternetConnected ? Colors.green.shade900 : Colors.orange.shade900,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                     if (_isConnected && _isDeviceAssociated) ...[
@@ -2225,7 +3254,123 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
             ),
             
             const SizedBox(height: 16),
-
+            
+            // Low Battery Warning (if battery <= 20%)
+            if (_isLowBattery && _batteryLevel != null) ...[
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade50,
+                  border: Border.all(color: Colors.red, width: 2),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.battery_alert, color: Colors.red, size: 36),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '🔋 Low Battery Warning!',
+                            style: TextStyle(
+                              color: Colors.red.shade900,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Device battery at $_batteryLevel%. Please charge your HC20 device soon.',
+                            style: TextStyle(
+                              color: Colors.red.shade800,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+            
+            // Manual Reconnect Button
+            if (!_isConnected && _savedDeviceId != null) ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Colors.blue.shade600, Colors.blue.shade400],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.blue.withOpacity(0.3),
+                      blurRadius: 8,
+                      offset: Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.refresh, color: Colors.white, size: 28),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Device Disconnected',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
+                              ),
+                              Text(
+                                'Tap below to manually reconnect',
+                                style: TextStyle(
+                                  color: Colors.white.withOpacity(0.9),
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    ElevatedButton.icon(
+                      onPressed: _isAutoReconnecting || _isReconnecting
+                          ? null
+                          : _manualReconnect,
+                      icon: Icon(Icons.sync),
+                      label: Text(
+                        _isAutoReconnecting || _isReconnecting
+                            ? 'Reconnecting...'
+                            : 'Manual Reconnect',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: Colors.blue.shade700,
+                        minimumSize: Size(double.infinity, 50),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+            
             // Battery Optimization Warning (if not disabled)
             if (!_isBatteryOptimizationDisabled) ...[
               Container(
@@ -2405,10 +3550,28 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
                 Expanded(
                   child: ElevatedButton(
                     onPressed: _isConnected ? _getHistoryData : null,
-                    child: const Text('Get History Data'),
+                    child: const Text('Get History'),
                   ),
                 ),
                 const SizedBox(width: 8),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: _isConnected ? _sendHistoryDataToWebhook : null,
+                    icon: const Icon(Icons.cloud_upload, size: 18),
+                    label: const Text('Send History'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.teal,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 8),
+
+            Row(
+              children: [
                 Expanded(
                   child: ElevatedButton.icon(
                     onPressed: _isConnected
@@ -2770,6 +3933,39 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
             style: TextStyle(
               fontWeight: FontWeight.bold,
               color: value != null ? Colors.green : Colors.grey,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  Widget _buildAnalyticTile(String label, String value, IconData icon, Color color) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: color, size: 24),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
+          Text(
+            label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 11,
+              color: Colors.grey.shade700,
             ),
           ),
         ],

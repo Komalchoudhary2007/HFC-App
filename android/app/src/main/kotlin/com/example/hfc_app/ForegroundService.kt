@@ -33,6 +33,11 @@ class ForegroundService : Service() {
     }
     
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Handle stop action from notification
+        if (intent?.action == "STOP_SERVICE") {
+            stopSelf()
+            return START_NOT_STICKY
+        }
         // Service is already in foreground from onCreate
         return START_STICKY
     }
@@ -66,12 +71,13 @@ class ForegroundService : Service() {
         )
         
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("HFC App Active")
-            .setContentText("Sending health data every 5 minutes")
+            .setContentTitle("HFC Health Monitoring")
+            .setContentText("Monitoring your health in background")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentIntent(pendingIntent)
-            .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOngoing(false)  // Allow user to swipe away the notification
+            .setPriority(NotificationCompat.PRIORITY_MIN)  // Minimize visual impact
+            .setShowWhen(false)  // Hide timestamp
             .build()
     }
     

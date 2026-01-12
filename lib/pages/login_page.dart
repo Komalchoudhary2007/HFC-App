@@ -71,7 +71,7 @@ class _LoginPageState extends State<LoginPage> {
       _isLoading = false;
       if (response.success) {
         _otpSent = true;
-        _successMessage = 'OTP sent to your phone number';
+        _successMessage = 'OTP sent to your WhatsApp number';
       } else {
         _errorMessage = response.error ?? 'Failed to send OTP';
       }
