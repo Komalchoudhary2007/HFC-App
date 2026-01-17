@@ -2538,9 +2538,9 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
         'dataType': 'history',
         'timestamp': now.toIso8601String(),
         'date': '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}',
-        'summary': summaryRows.map((row) => row.toString()).toList(),
-        'heartRate': heartRows.map((row) => row.toString()).toList(),
-        'hrv': hrvRows.map((row) => row.toString()).toList(),
+        'summary': summaryRows.map((row) => row.toJson()).toList(),
+        'heartRate': heartRows.map((row) => row.toJson()).toList(),
+        'hrv': hrvRows.map((row) => row.toJson()).toList(),
         'recordCounts': {
           'summary': summaryRows.length,
           'heartRate': heartRows.length,

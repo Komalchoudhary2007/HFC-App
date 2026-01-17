@@ -80,6 +80,26 @@ check_android_sdk() {
     fi
 }
 
+# Install Java 21
+install_java() {
+    print_header "Installing Java 21"
+    
+    if java -version 2>&1 | grep -q "openjdk version \"21"; then
+        print_success "Java 21 already installed"
+    else
+        print_info "Installing OpenJDK 21..."
+        export DEBIAN_FRONTEND=noninteractive
+        sudo apt-get update -qq > /dev/null 2>&1
+        sudo apt-get install -y openjdk-21-jdk > /dev/null 2>&1
+        print_success "Java 21 installed"
+    fi
+    
+    # Set Java 21 as default
+    export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+    export PATH="$JAVA_HOME/bin:$PATH"
+    print_info "Java version: $(java -version 2>&1 | head -n 1)"
+}
+
 # Install Android SDK
 install_android_sdk() {
     print_header "Installing Android SDK"
@@ -103,8 +123,9 @@ install_android_sdk() {
     fi
     
     # Setup environment variables
+    export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
     export ANDROID_HOME="$ANDROID_SDK_DIR"
-    export PATH="$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools"
+    export PATH="$JAVA_HOME/bin:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
     
     # Accept licenses
     print_info "Accepting SDK licenses..."
@@ -141,8 +162,9 @@ build_apk() {
     print_header "Building APK"
     
     # Setup environment
+    export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
     export ANDROID_HOME="$ANDROID_SDK_DIR"
-    export PATH="$PATH:$FLUTTER_DIR/bin:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools"
+    export PATH="$JAVA_HOME/bin:$FLUTTER_DIR/bin:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
     
     cd "$PROJECT_DIR"
     
@@ -221,16 +243,19 @@ main() {
     # Step 1: Install Flutter
     install_flutter
     
-    # Step 2: Install Android SDK
+    # Step 2: Install Java 21
+    install_java
+    
+    # Step 3: Install Android SDK
     install_android_sdk
     
-    # Step 3: Build APK
+    # Step 4: Build APK
     build_apk
     
-    # Step 4: Update download page
+    # Step 5: Update download page
     update_download_page
     
-    # Step 5: Start server
+    # Step 6: Start server
     start_server
     
     # Keep script running to maintain server
