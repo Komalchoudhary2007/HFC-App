@@ -133,6 +133,9 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
   Timer? _dataRefreshTimer;
   Timer? _connectionMonitor;
   Timer? _hrvRefreshTimer;  // Timer for 6-hour HRV refresh
+  Timer? _hrv2RefreshTimer;  // Timer for 6-hour HRV2 refresh
+  Timer? _rriRefreshTimer;  // Timer for 6-hour RRI refresh
+  Timer? _temperatureRefreshTimer;  // Timer for 6-hour Temperature refresh
   Timer? _autoReconnectScanner;  // Timer for auto-reconnect scanning
   DateTime? _lastDataReceived;
   
@@ -772,6 +775,9 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     _dataRefreshTimer?.cancel();
     _connectionMonitor?.cancel();
     _hrvRefreshTimer?.cancel();
+    _hrv2RefreshTimer?.cancel();
+    _rriRefreshTimer?.cancel();
+    _temperatureRefreshTimer?.cancel();
     _internetMonitorTimer?.cancel();
     _autoReconnectScanner?.cancel();
     _bluetoothStateSubscription?.cancel();
@@ -1106,6 +1112,15 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
       // Start HRV auto-refresh (6 hours)
       _startHrvAutoRefresh();
       
+      // Start HRV2 auto-refresh (6 hours)
+      _startHrv2AutoRefresh();
+      
+      // Start RRI auto-refresh (6 hours)
+      _startRriAutoRefresh();
+      
+      // Start Temperature auto-refresh (6 hours)
+      _startTemperatureAutoRefresh();
+      
       // Background execution enabled via foreground service + wake lock
       print('✓ Data streaming started - webhooks will continue in background');
       
@@ -1405,6 +1420,93 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     print('✓ HRV auto-refresh started - will run every 6 hours\n');
   }
   
+  void _startHrv2AutoRefresh() {
+    // Cancel any existing HRV2 timer
+    _hrv2RefreshTimer?.cancel();
+    
+    print('\n📊 ========================================');
+    print('📊 Starting HRV2 auto-refresh');
+    print('📊 Refresh interval: Every 6 hours (21600 seconds)');
+    print('📊 Works in: Foreground AND Background');
+    print('📊 ========================================\n');
+    
+    // Set up periodic timer for 6-hour HRV2 data fetch
+    _hrv2RefreshTimer = Timer.periodic(const Duration(hours: 6), (timer) async {
+      if (_isConnected && _connectedDevice != null && _client != null) {
+        print('\n⏰ [HRV2 Auto-Refresh] 6-hour timer triggered');
+        print('   Current time: ${DateTime.now().toIso8601String()}');
+        
+        await _fetchHrv2Data();
+      } else {
+        print('⚠️  [HRV2 Auto-Refresh] Device not connected, skipping refresh');
+      }
+    });
+    
+    // Also do an immediate first fetch
+    print('🚀 [HRV2 Auto-Refresh] Doing immediate first HRV2 fetch...');
+    _fetchHrv2Data();
+    
+    print('✓ HRV2 auto-refresh started - will run every 6 hours\n');
+  }
+  
+  void _startRriAutoRefresh() {
+    // Cancel any existing RRI timer
+    _rriRefreshTimer?.cancel();
+    
+    print('\n📊 ========================================');
+    print('📊 Starting RRI auto-refresh');
+    print('📊 Refresh interval: Every 6 hours (21600 seconds)');
+    print('📊 Works in: Foreground AND Background');
+    print('📊 ========================================\n');
+    
+    // Set up periodic timer for 6-hour RRI data fetch
+    _rriRefreshTimer = Timer.periodic(const Duration(hours: 6), (timer) async {
+      if (_isConnected && _connectedDevice != null && _client != null) {
+        print('\n⏰ [RRI Auto-Refresh] 6-hour timer triggered');
+        print('   Current time: ${DateTime.now().toIso8601String()}');
+        
+        await _fetchRriData();
+      } else {
+        print('⚠️  [RRI Auto-Refresh] Device not connected, skipping refresh');
+      }
+    });
+    
+    // Also do an immediate first fetch
+    print('🚀 [RRI Auto-Refresh] Doing immediate first RRI fetch...');
+    _fetchRriData();
+    
+    print('✓ RRI auto-refresh started - will run every 6 hours\n');
+  }
+  
+  void _startTemperatureAutoRefresh() {
+    // Cancel any existing Temperature timer
+    _temperatureRefreshTimer?.cancel();
+    
+    print('\n📊 ========================================');
+    print('📊 Starting Temperature auto-refresh');
+    print('📊 Refresh interval: Every 6 hours (21600 seconds)');
+    print('📊 Works in: Foreground AND Background');
+    print('📊 ========================================\n');
+    
+    // Set up periodic timer for 6-hour Temperature data fetch
+    _temperatureRefreshTimer = Timer.periodic(const Duration(hours: 6), (timer) async {
+      if (_isConnected && _connectedDevice != null && _client != null) {
+        print('\n⏰ [Temperature Auto-Refresh] 6-hour timer triggered');
+        print('   Current time: ${DateTime.now().toIso8601String()}');
+        
+        await _fetchTemperatureData();
+      } else {
+        print('⚠️  [Temperature Auto-Refresh] Device not connected, skipping refresh');
+      }
+    });
+    
+    // Also do an immediate first fetch
+    print('🚀 [Temperature Auto-Refresh] Doing immediate first Temperature fetch...');
+    _fetchTemperatureData();
+    
+    print('✓ Temperature auto-refresh started - will run every 6 hours\n');
+  }
+  
   Future<void> _fetchHrvData() async {
     if (_client == null || _connectedDevice == null) {
       print('⚠️  [HRV Fetch] No device connected');
@@ -1447,6 +1549,132 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
       // Handle specific error codes
       if (e.toString().contains('0xE2') || e.toString().contains('0xe2')) {
         print('ℹ️  Device reported no HRV data available');
+      }
+    }
+  }
+  
+  Future<void> _fetchHrv2Data() async {
+    if (_client == null || _connectedDevice == null) {
+      print('⚠️  [HRV2 Fetch] No device connected');
+      return;
+    }
+    
+    try {
+      final now = DateTime.now();
+      final yy = now.year % 100;
+      final mm = now.month;
+      final dd = now.day;
+      final dateStr = '${now.year}-${mm.toString().padLeft(2, '0')}-${dd.toString().padLeft(2, '0')}';
+      
+      print('\n📊 ========================================');
+      print('📊 Fetching HRV2 data for $dateStr');
+      print('📊 Device: ${_connectedDevice!.name}');
+      print('📊 Note: SDK automatically uploads to Nitto cloud');
+      print('📊 ========================================');
+      
+      // Fetch HRV2 data from device
+      // This automatically triggers upload to Nitto cloud server
+      final hrv2Rows = await _client!.getAllDayHrv2Rows(
+        _connectedDevice!,
+        yy: yy,
+        mm: mm,
+        dd: dd,
+      );
+      
+      print('✅ HRV2 data fetched: ${hrv2Rows.length} records');
+      print('✅ Data automatically uploaded to Nitto cloud by SDK');
+      
+      print('✅ HRV2 refresh completed successfully\n');
+    } catch (e) {
+      print('❌ Error fetching HRV2 data: $e');
+      
+      // Handle specific error codes
+      if (e.toString().contains('0xE2') || e.toString().contains('0xe2')) {
+        print('ℹ️  Device reported no HRV2 data available');
+      }
+    }
+  }
+  
+  Future<void> _fetchRriData() async {
+    if (_client == null || _connectedDevice == null) {
+      print('⚠️  [RRI Fetch] No device connected');
+      return;
+    }
+    
+    try {
+      final now = DateTime.now();
+      final yy = now.year % 100;
+      final mm = now.month;
+      final dd = now.day;
+      final dateStr = '${now.year}-${mm.toString().padLeft(2, '0')}-${dd.toString().padLeft(2, '0')}';
+      
+      print('\n📊 ========================================');
+      print('📊 Fetching RRI data for $dateStr');
+      print('📊 Device: ${_connectedDevice!.name}');
+      print('📊 Note: SDK automatically uploads to Nitto cloud');
+      print('📊 ========================================');
+      
+      // Fetch RRI data from device
+      // This automatically triggers upload to Nitto cloud server
+      final rriRows = await _client!.getAllDayRriRows(
+        _connectedDevice!,
+        yy: yy,
+        mm: mm,
+        dd: dd,
+      );
+      
+      print('✅ RRI data fetched: ${rriRows.length} records');
+      print('✅ Data automatically uploaded to Nitto cloud by SDK');
+      
+      print('✅ RRI refresh completed successfully\n');
+    } catch (e) {
+      print('❌ Error fetching RRI data: $e');
+      
+      // Handle specific error codes
+      if (e.toString().contains('0xE2') || e.toString().contains('0xe2')) {
+        print('ℹ️  Device reported no RRI data available');
+      }
+    }
+  }
+  
+  Future<void> _fetchTemperatureData() async {
+    if (_client == null || _connectedDevice == null) {
+      print('⚠️  [Temperature Fetch] No device connected');
+      return;
+    }
+    
+    try {
+      final now = DateTime.now();
+      final yy = now.year % 100;
+      final mm = now.month;
+      final dd = now.day;
+      final dateStr = '${now.year}-${mm.toString().padLeft(2, '0')}-${dd.toString().padLeft(2, '0')}';
+      
+      print('\n📊 ========================================');
+      print('📊 Fetching Temperature data for $dateStr');
+      print('📊 Device: ${_connectedDevice!.name}');
+      print('📊 Note: SDK automatically uploads to Nitto cloud');
+      print('📊 ========================================');
+      
+      // Fetch Temperature data from device
+      // This automatically triggers upload to Nitto cloud server
+      final temperatureRows = await _client!.getAllDayTemperatureRows(
+        _connectedDevice!,
+        yy: yy,
+        mm: mm,
+        dd: dd,
+      );
+      
+      print('✅ Temperature data fetched: ${temperatureRows.length} records');
+      print('✅ Data automatically uploaded to Nitto cloud by SDK');
+      
+      print('✅ Temperature refresh completed successfully\n');
+    } catch (e) {
+      print('❌ Error fetching Temperature data: $e');
+      
+      // Handle specific error codes
+      if (e.toString().contains('0xE2') || e.toString().contains('0xe2')) {
+        print('ℹ️  Device reported no Temperature data available');
       }
     }
   }
@@ -1611,6 +1839,12 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     _connectionMonitor = null;
     _hrvRefreshTimer?.cancel();
     _hrvRefreshTimer = null;
+    _hrv2RefreshTimer?.cancel();
+    _hrv2RefreshTimer = null;
+    _rriRefreshTimer?.cancel();
+    _rriRefreshTimer = null;
+    _temperatureRefreshTimer?.cancel();
+    _temperatureRefreshTimer = null;
   }
   
   void _sendStressWebhook() {
