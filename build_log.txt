@@ -1,3 +1,81 @@
+[H[2J[3J[0;34m
+╔══════════════════════════════════════════╗
+║  HFC App - Build & Serve Automation     ║
+║  Automated Flutter APK Builder           ║
+╚══════════════════════════════════════════╝
+[0m
+
+[1;33mℹ Starting automated build process...[0m
+
+
+[0;34m================================[0m
+[0;34mInstalling Flutter SDK[0m
+[0;34m================================[0m
+
+[1;33mℹ Cloning Flutter stable channel...[0m
+Cloning into 'flutter'...
+Updating files:  88% (13441/15104)Updating files:  89% (13443/15104)Updating files:  90% (13594/15104)Updating files:  91% (13745/15104)Updating files:  92% (13896/15104)Updating files:  93% (14047/15104)Updating files:  94% (14198/15104)Updating files:  95% (14349/15104)Updating files:  96% (14500/15104)Updating files:  97% (14651/15104)Updating files:  98% (14802/15104)Updating files:  99% (14953/15104)Updating files: 100% (15104/15104)Updating files: 100% (15104/15104), done.
+[0;32m✓ Flutter SDK installed[0m
+[1;33mℹ Running flutter doctor...[0m
+Downloading Linux x64 Dart SDK from Flutter engine 78fc3012e45889657f72359b005af7beac47ba3d...
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0  0  200M    0 20570    0     0  35723      0  1:37:57 --:--:--  1:37:57 35711  0  200M    0  257k    0     0   168k      0  0:20:13  0:00:01  0:20:12  168k  2  200M    2 4493k    0     0  1794k      0  0:01:54  0:00:02  0:01:52 1794k 10  200M   10 21.0M    0     0  6141k      0  0:00:33  0:00:03  0:00:30 6139k 18  200M   18 37.5M    0     0  8538k      0  0:00:24  0:00:04  0:00:20 8537k 27  200M   27 54.0M    0     0   9.8M      0  0:00:20  0:00:05  0:00:15 10.9M 34  200M   34 69.9M    0     0  10.6M      0  0:00:18  0:00:06  0:00:12 13.7M 42  200M   42 84.6M    0     0  11.2M      0  0:00:17  0:00:07  0:00:10 16.0M 49  200M   49 99.8M    0     0  11.6M      0  0:00:17  0:00:08  0:00:09 15.5M 58  200M   58  116M    0     0  12.2M      0  0:00:16  0:00:09  0:00:07 15.7M 66  200M   66  132M    0     0  12.5M      0  0:00:15  0:00:10  0:00:05 15.5M 74  200M   74  149M    0     0  13.0M      0  0:00:15  0:00:11  0:00:04 16.2M 82  200M   82  165M    0     0  13.1M      0  0:00:15  0:00:12  0:00:03 16.0M 91  200M   91  183M    0     0  13.5M      0  0:00:14  0:00:13  0:00:01 16.9M 99  200M   99  198M    0     0  13.6M      0  0:00:14  0:00:14 --:--:-- 16.3M100  200M  100  200M    0     0  13.7M      0  0:00:14  0:00:14 --:--:-- 16.8M
+Building flutter tool...
+Resolving dependencies...
+Downloading packages...
+Got dependencies.
+Downloading Material fonts...                                      493ms
+Downloading Gradle Wrapper...                                      805ms
+Downloading package sky_engine...                                  100ms
+Downloading package flutter_gpu...                                  14ms
+Downloading flutter_patched_sdk tools...                           244ms
+Downloading flutter_patched_sdk_product tools...                   210ms
+Downloading linux-x64 tools...                                      4.8s
+Downloading linux-x64/font-subset tools...                         334ms
+Doctor summary (to see all details, run flutter doctor -v):
+[✓] Flutter (Channel stable, 3.38.7, on Ubuntu 24.04.3 LTS 6.8.0-1030-azure, locale C.UTF-8)
+[✗] Android toolchain - develop for Android devices
+    ✗ Unable to locate Android SDK.
+      Install Android Studio from: https://developer.android.com/studio/index.html
+      On first launch it will assist you in installing the Android SDK components.
+      (or visit https://flutter.dev/to/linux-android-setup for detailed instructions).
+      If the Android SDK has been installed to a custom location, please use
+      `flutter config --android-sdk` to update to that location.
+
+[✗] Chrome - develop for the web (Cannot find Chrome executable at google-chrome)
+    ! Cannot find Chrome. Try setting CHROME_EXECUTABLE to a Chrome executable.
+[✗] Linux toolchain - develop for Linux desktop
+    ✗ ninja is required for Linux development.
+      It is likely available from your distribution (e.g.: apt install ninja-build), or can be downloaded from https://github.com/ninja-build/ninja/releases
+    ✗ GTK 3.0 development libraries are required for Linux development.
+      They are likely available from your distribution (e.g.: apt install libgtk-3-dev)
+    ! Unable to access driver information using 'eglinfo'.
+      It is likely available from your distribution (e.g.: apt install mesa-utils)
+[✓] Connected device (1 available)
+[✓] Network resources
+
+! Doctor found issues in 3 categories.
+[0;32m✓ Flutter setup complete[0m
+
+[0;34m================================[0m
+[0;34mInstalling Android SDK[0m
+[0;34m================================[0m
+
+[1;33mℹ Creating Android SDK directory...[0m
+[1;33mℹ Downloading Android command-line tools...[0m
+[1;33mℹ Extracting tools...[0m
+[0;32m✓ Android SDK command-line tools installed[0m
+[1;33mℹ Accepting SDK licenses...[0m
+[1;33mℹ Installing Android SDK packages...[0m
+[0;32m✓ Android SDK setup complete[0m
+
+[0;34m================================[0m
+[0;34mBuilding APK[0m
+[0;34m================================[0m
+
+[1;33mℹ Cleaning project...[0m
+[1;33mℹ Getting dependencies...[0m
 Resolving dependencies...
 Downloading packages...
   android_alarm_manager_plus 4.0.8 (5.0.0 available)
@@ -6,6 +84,9 @@ Downloading packages...
   characters 1.4.0 (1.4.1 available)
   ffi 2.1.3 (2.1.5 available)
   flutter_lints 4.0.0 (6.0.0 available)
+  flutter_local_notifications 17.2.4 (19.5.0 available)
+  flutter_local_notifications_linux 4.0.1 (6.0.0 available)
+  flutter_local_notifications_platform_interface 7.2.0 (9.1.0 available)
   flutter_secure_storage 9.2.4 (10.0.0 available)
   flutter_secure_storage_linux 1.2.3 (3.0.0 available)
   flutter_secure_storage_macos 3.1.3 (4.0.0 available)
@@ -17,8 +98,9 @@ Downloading packages...
   lints 4.0.0 (6.0.0 available)
   matcher 0.12.17 (0.12.18 available)
   material_color_utilities 0.11.1 (0.13.0 available)
+  meta 1.17.0 (1.18.0 available)
   path_provider_android 2.2.15 (2.2.22 available)
-  path_provider_foundation 2.4.1 (2.5.1 available)
+  path_provider_foundation 2.4.1 (2.6.0 available)
   permission_handler 11.4.0 (12.0.1 available)
   permission_handler_android 12.1.0 (13.0.1 available)
   protobuf 2.1.0 (6.0.0 available)
@@ -29,34 +111,32 @@ Downloading packages...
   string_scanner 1.2.0 (1.4.1 available)
   term_glyph 1.2.1 (1.2.2 available)
   test_api 0.7.7 (0.7.9 available)
+  timezone 0.9.4 (0.11.0 available)
   vm_service 14.2.5 (15.0.2 available)
   win32 5.10.1 (5.15.0 available)
-Got dependencies!
-31 packages have newer versions incompatible with dependency constraints.
++ workmanager 0.5.2 (0.9.0+3 available)
+Changed 1 dependency!
+37 packages have newer versions incompatible with dependency constraints.
 Try `flutter pub outdated` for more information.
+[1;33mℹ Building release APK (this may take several minutes)...[0m
+Downloading android-arm-profile/linux-x64 tools...                 281ms
+Downloading android-arm-release/linux-x64 tools...                 167ms
+Downloading android-arm64-profile/linux-x64 tools...               169ms
+Downloading android-arm64-release/linux-x64 tools...               136ms
+Downloading android-x64-profile/linux-x64 tools...                 151ms
+Downloading android-x64-release/linux-x64 tools...                 220ms
 Running Gradle task 'assembleRelease'...                        
-lib/main.dart:1921:40: Error: Expected an identifier, but got '..'.
-Try inserting an identifier before '..'.
-                      if (hasDeviceId) ..[
-                                       ^^
-lib/main.dart:1928:26: Error: Expected ']' before this.
-                        ),
-                         ^
-lib/main.dart:1946:30: Error: Expected an identifier, but got '..'.
-Try inserting an identifier before '..'.
-                      ] else ..[
-                             ^^
-lib/main.dart:1953:26: Error: Expected ']' before this.
-                        ),
-                         ^
-Target kernel_snapshot_program failed: Exception
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::load has been called by net.rubygrapefruit.platform.internal.NativeLibraryLoader in an unnamed module (file:/home/codespace/.gradle/wrapper/dists/gradle-8.9-all/6m0mbzute7p0zdleavqlib88a/gradle-8.9/lib/native-platform-0.22-milestone-26.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
 
 
 FAILURE: Build failed with an exception.
 
 * What went wrong:
-Execution failed for task ':app:compileFlutterBuildRelease'.
-> Process 'command '/tmp/flutter-sdk/bin/flutter'' finished with non-zero exit value 1
+BUG! exception in phase 'semantic analysis' in source unit '_BuildScript_' Unsupported class file major version 69
+> Unsupported class file major version 69
 
 * Try:
 > Run with --stacktrace option to get the stack trace.
@@ -64,6 +144,58 @@ Execution failed for task ':app:compileFlutterBuildRelease'.
 > Run with --scan to get full insights.
 > Get more help at https://help.gradle.org.
 
-BUILD FAILED in 17s
-Running Gradle task 'assembleRelease'...                           18.2s
+BUILD FAILED in 25s
+Running Gradle task 'assembleRelease'...                           25.7s
+
+┌─ Flutter Fix ───────────────────────────────────────────────────────────────────────────────────┐
+│ [!] Your project's Gradle version is incompatible with the Java version that Flutter is using   │
+│ for Gradle.                                                                                     │
+│                                                                                                 │
+│ To fix this issue, first, check the Java version used by Flutter by running `flutter doctor     │
+│ --verbose`.                                                                                     │
+│                                                                                                 │
+│ Then, update the Gradle version specified in                                                    │
+│ /workspaces/HFC-App/android/gradle/wrapper/gradle-wrapper.properties to be compatible with that │
+│ Java version. See the link below for more information on compatible Java/Gradle versions:       │
+│ https://docs.gradle.org/current/userguide/compatibility.html#java                               │
+│                                                                                                 │
+│                                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────────────────────┘
+Gradle task assembleRelease failed with exit code 1
+Running Gradle task 'assembleRelease'...                        
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::load has been called by net.rubygrapefruit.platform.internal.NativeLibraryLoader in an unnamed module (file:/home/codespace/.gradle/wrapper/dists/gradle-8.11.1-all/2qik7nd48slq1ooc2496ixf4i/gradle-8.11.1/lib/native-platform-0.22-milestone-26.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+BUG! exception in phase 'semantic analysis' in source unit '_BuildScript_' Unsupported class file major version 69
+> Unsupported class file major version 69
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 29s
+Running Gradle task 'assembleRelease'...                           29.7s
+
+┌─ Flutter Fix ───────────────────────────────────────────────────────────────────────────────────┐
+│ [!] Your project's Gradle version is incompatible with the Java version that Flutter is using   │
+│ for Gradle.                                                                                     │
+│                                                                                                 │
+│ To fix this issue, first, check the Java version used by Flutter by running `flutter doctor     │
+│ --verbose`.                                                                                     │
+│                                                                                                 │
+│ Then, update the Gradle version specified in                                                    │
+│ /workspaces/HFC-App/android/gradle/wrapper/gradle-wrapper.properties to be compatible with that │
+│ Java version. See the link below for more information on compatible Java/Gradle versions:       │
+│ https://docs.gradle.org/current/userguide/compatibility.html#java                               │
+│                                                                                                 │
+│                                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────────────────────┘
 Gradle task assembleRelease failed with exit code 1

@@ -1,10 +1,22 @@
 #!/bin/bash
-
+#run with: bash build_and_serve.sh
 # HFC App - Automated Build and Serve Script
 # ==========================================
 # This script automates Flutter/Android SDK installation, APK building, and server deployment
 
 set -e  # Exit on any error
+
+# Fix bash path issue for Flutter scripts
+if [ ! -f /usr/bin/env ]; then
+    echo "Warning: /usr/bin/env not found, creating symlink..."
+    sudo ln -sf /bin/env /usr/bin/env 2>/dev/null || true
+fi
+
+# Ensure bash is available for Flutter scripts
+if ! command -v bash &> /dev/null; then
+    echo "Error: bash not found in PATH"
+    exit 1
+fi
 
 # Colors for output
 RED='\033[0;31m'
@@ -66,7 +78,7 @@ install_flutter() {
     
     # Run flutter doctor to download Dart SDK
     print_info "Running flutter doctor..."
-    flutter doctor
+    $FLUTTER_DIR/bin/flutter doctor
     print_success "Flutter setup complete"
 }
 
@@ -117,6 +129,41 @@ install_android_sdk() {
     print_success "Android SDK setup complete"
 }
 
+# Increment build number in pubspec.yaml
+increment_version() {
+    print_header "Incrementing Build Number"
+    
+    cd "$PROJECT_DIR"
+    
+    # Read current version from pubspec.yaml
+    CURRENT_VERSION=$(grep "^version:" pubspec.yaml | awk '{print $2}')
+    
+    # Split version into name and build number
+    VERSION_NAME=$(echo $CURRENT_VERSION | cut -d'+' -f1)
+    BUILD_NUMBER=$(echo $CURRENT_VERSION | cut -d'+' -f2)
+    
+    # Split version name into major.minor.patch
+    MAJOR=$(echo $VERSION_NAME | cut -d'.' -f1)
+    MINOR=$(echo $VERSION_NAME | cut -d'.' -f2)
+    PATCH=$(echo $VERSION_NAME | cut -d'.' -f3)
+    
+    # Increment patch version (8.0.10 -> 8.0.11)
+    NEW_PATCH=$((PATCH + 1))
+    NEW_VERSION_NAME="${MAJOR}.${MINOR}.${NEW_PATCH}"
+    
+    # Reset build number to 1 for new version
+    NEW_BUILD_NUMBER=1
+    NEW_VERSION="${NEW_VERSION_NAME}+${NEW_BUILD_NUMBER}"
+    
+    print_info "Current Version: $CURRENT_VERSION"
+    print_info "New Version: $NEW_VERSION"
+    
+    # Update pubspec.yaml with new version
+    sed -i "s/^version: .*/version: $NEW_VERSION/" pubspec.yaml
+    
+    print_success "Version incremented: $VERSION_NAME → $NEW_VERSION_NAME (build: $NEW_BUILD_NUMBER)"
+}
+
 # Update version in download.html
 update_download_page() {
     print_header "Updating Download Page"
@@ -140,20 +187,51 @@ update_download_page() {
 build_apk() {
     print_header "Building APK"
     
-    # Setup environment
+    # Setup environment with Java 21 (required for Gradle 8.11.1)
+    export JAVA_HOME="/usr/local/sdkman/candidates/java/21.0.9-ms"
     export ANDROID_HOME="$ANDROID_SDK_DIR"
-    export PATH="$PATH:$FLUTTER_DIR/bin:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools"
+    export PATH="$JAVA_HOME/bin:$FLUTTER_DIR/bin:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
+    
+    # Additional environment variables for Gradle
+    export ANDROID_SDK_ROOT="$ANDROID_SDK_DIR"
+    
+    # Gradle options to prevent daemon crashes in low-memory environments
+    export GRADLE_OPTS="-Xmx2048m -Dorg.gradle.jvmargs='-Xmx2048m -XX:MaxMetaspaceSize=512m' -Dorg.gradle.daemon=false"
+    
+    print_info "Environment Setup:"
+    print_info "JAVA_HOME: $JAVA_HOME"
+    print_info "ANDROID_HOME: $ANDROID_HOME"
+    print_info "Flutter: $FLUTTER_DIR/bin/flutter"
+    print_info "Gradle configured with no-daemon mode for stability"
+    
+    print_info "Using Java version:"
+    java -version 2>&1 | head -n 2
     
     cd "$PROJECT_DIR"
     
+    # Kill any existing Gradle daemons to free memory
+    print_info "Stopping existing Gradle daemons..."
+    cd android && ./gradlew --stop 2>/dev/null || true
+    cd "$PROJECT_DIR"
+    
+    # Clean with proper error handling
     print_info "Cleaning project..."
-    flutter clean
+    if ! $FLUTTER_DIR/bin/flutter clean 2>&1; then
+        print_error "Flutter clean failed, but continuing..."
+    fi
     
     print_info "Getting dependencies..."
-    flutter pub get
+    $FLUTTER_DIR/bin/flutter pub get
     
     print_info "Building release APK (this may take several minutes)..."
-    flutter build apk --release
+    print_info "Using no-daemon mode to prevent memory issues..."
+    $FLUTTER_DIR/bin/flutter build apk --release
+    
+    # Verify APK was created
+    if [ ! -f "build/app/outputs/flutter-apk/app-release.apk" ]; then
+        print_error "APK build failed - file not found"
+        exit 1
+    fi
     
     # Copy APK to root directory
     print_info "Copying APK to root directory..."
@@ -224,10 +302,13 @@ main() {
     # Step 2: Install Android SDK
     install_android_sdk
     
-    # Step 3: Build APK
+    # Step 3: Increment version number
+    increment_version
+    
+    # Step 4: Build APK
     build_apk
     
-    # Step 4: Update download page
+    # Step 5: Update download page
     update_download_page
     
     # Step 5: Start server
@@ -246,3 +327,7 @@ main() {
 
 # Run main function
 main
+
+# export JAVA_HOME="/usr/local/sdkman/candidates/java/21.0.9-ms" && export ANDROID_HOME="/tmp/android-sdk" && export PATH="$JAVA_HOME/bin:/tmp/flutter/bin:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH" && /tmp/flutter/bin/flutter build apk --release 2>&1
+# export JAVA_HOME="/usr/local/sdkman/candidates/java/21.0.9-ms" && export ANDROID_HOME="/tmp/android-sdk" && export PATH="$JAVA_HOME/bin:/tmp/flutter/bin:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH" && cd /workspaces/HFC-App && /tmp/flutter/bin/flutter build apk --release 2>&1
+# flutter build apk --release 2>&1 | tail -50
