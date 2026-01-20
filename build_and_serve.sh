@@ -223,26 +223,38 @@ build_apk() {
     print_info "Getting dependencies..."
     $FLUTTER_DIR/bin/flutter pub get
     
-    print_info "Building release APK (this may take several minutes)..."
+    # Output locations for symbols and APKs
+    local SYM_DIR="$PROJECT_DIR/build/symbols"
+    local APK_OUT="$PROJECT_DIR/build/app/outputs/flutter-apk"
+    mkdir -p "$SYM_DIR"
+
+    print_info "Building split-per-ABI release APKs (arm/arm64 only, tree-shaken, split debug info)..."
     print_info "Using no-daemon mode to prevent memory issues..."
-    $FLUTTER_DIR/bin/flutter build apk --release
-    
-    # Verify APK was created
-    if [ ! -f "build/app/outputs/flutter-apk/app-release.apk" ]; then
-        print_error "APK build failed - file not found"
+    $FLUTTER_DIR/bin/flutter build apk --release \
+        --split-per-abi \
+        --tree-shake-icons \
+        --split-debug-info="$SYM_DIR" \
+        --target-platform=android-arm,android-arm64
+
+    local APK_ARMV7="$APK_OUT/app-armeabi-v7a-release.apk"
+    local APK_ARM64="$APK_OUT/app-arm64-v8a-release.apk"
+
+    if [ ! -f "$APK_ARMV7" ] || [ ! -f "$APK_ARM64" ]; then
+        print_error "APK build failed - per-ABI files not found"
         exit 1
     fi
-    
-    # Copy APK to root directory
-    print_info "Copying APK to root directory..."
-    cp build/app/outputs/flutter-apk/app-release.apk app-release.apk
-    
-    # Get APK size
-    APK_SIZE=$(ls -lh app-release.apk | awk '{print $5}')
-    
+
+    print_info "Copying APKs to root directory..."
+    cp "$APK_ARMV7" "$PROJECT_DIR/app-armeabi-v7a-release.apk"
+    cp "$APK_ARM64" "$PROJECT_DIR/app-arm64-v8a-release.apk"
+
+    local SIZE_ARMV7=$(ls -lh "$PROJECT_DIR/app-armeabi-v7a-release.apk" | awk '{print $5}')
+    local SIZE_ARM64=$(ls -lh "$PROJECT_DIR/app-arm64-v8a-release.apk" | awk '{print $5}')
+
     print_success "APK built successfully!"
-    print_info "APK Location: $PROJECT_DIR/app-release.apk"
-    print_info "APK Size: $APK_SIZE"
+    print_info "APK Locations:"
+    print_info " - ARMv7 : $PROJECT_DIR/app-armeabi-v7a-release.apk ($SIZE_ARMV7)"
+    print_info " - ARM64 : $PROJECT_DIR/app-arm64-v8a-release.apk ($SIZE_ARM64)"
 }
 
 # Stop existing server

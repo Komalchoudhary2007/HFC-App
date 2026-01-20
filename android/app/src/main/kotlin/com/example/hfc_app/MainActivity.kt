@@ -66,39 +66,6 @@ class MainActivity: FlutterActivity() {
         // This is the MOST RELIABLE method for auto-restarting closed app
         AppRestartWorker.schedule(applicationContext)
         Log.d(TAG, "✅ Native WorkManager scheduled (15-min restart)")
-        
-        // Check and request overlay permission (needed for screen-ON restart)
-        checkAndRequestOverlayPermission()
-    }
-    
-    /**
-     * Check if overlay permission is granted, if not show dialog to request it
-     * This is CRITICAL for auto-restart when screen is ON
-     */
-    private fun checkAndRequestOverlayPermission() {
-        if (!OverlayLauncher.hasOverlayPermission(this)) {
-            Log.d(TAG, "⚠️ Overlay permission not granted - requesting...")
-            
-            // Show explanation dialog first
-            AlertDialog.Builder(this)
-                .setTitle("Enable Auto-Restart")
-                .setMessage(
-                    "To automatically restart and reconnect to HC20 when the app is closed, " +
-                    "please enable 'Display over other apps' permission.\n\n" +
-                    "This allows the app to restart even when your screen is ON."
-                )
-                .setPositiveButton("Enable") { _, _ ->
-                    OverlayLauncher.requestOverlayPermission(this)
-                }
-                .setNegativeButton("Later") { dialog, _ ->
-                    dialog.dismiss()
-                    Log.d(TAG, "   User declined overlay permission (will ask later)")
-                }
-                .setCancelable(false)
-                .show()
-        } else {
-            Log.d(TAG, "✅ Overlay permission already granted")
-        }
     }
     
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -169,36 +136,6 @@ class MainActivity: FlutterActivity() {
                     val status = testAlarmScheduling()
                     result.success(status)
                 }
-                "hasOverlayPermission" -> {
-                    val hasPermission = OverlayLauncher.hasOverlayPermission(applicationContext)
-                    result.success(hasPermission)
-                }
-                "requestOverlayPermission" -> {
-                    OverlayLauncher.requestOverlayPermission(this)
-                    result.success(true)
-                }
-                // ==================== NATIVE HC20 SERVICE (Pure Kotlin BLE) ====================
-                // This is the NEW approach that works when app is swiped away
-                "startNativeHC20Service" -> {
-                    val deviceId = call.argument<String>("deviceId")
-                    val userPhone = call.argument<String>("userPhone")
-                    Log.d(TAG, "🚀 Starting NativeHC20Service (Pure Kotlin BLE)")
-                    Log.d(TAG, "   Device: $deviceId")
-                    Log.d(TAG, "   Phone: $userPhone")
-                    NativeHC20Service.start(applicationContext, deviceId, userPhone)
-                    result.success(true)
-                }
-                "stopNativeHC20Service" -> {
-                    Log.d(TAG, "🛑 Stopping NativeHC20Service")
-                    NativeHC20Service.stop(applicationContext)
-                    result.success(true)
-                }
-                "isNativeHC20ServiceRunning" -> {
-                    val running = NativeHC20Service.isRunning()
-                    Log.d(TAG, "📋 NativeHC20Service running: $running")
-                    result.success(running)
-                }
-                // ==================== END NATIVE HC20 SERVICE ====================
                 else -> result.notImplemented()
             }
         }
@@ -503,7 +440,7 @@ class MainActivity: FlutterActivity() {
     /**
      * Setup Main Engine Keep-Alive MethodChannel
      * This allows the main Flutter engine to stay alive when app goes to background
-     * Instead of HeadlessFlutter, we keep the MAIN app running but minimized
+     * We keep the MAIN app running but minimized
      */
     private fun setupKeepAliveChannel(flutterEngine: FlutterEngine) {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, KEEPALIVE_CHANNEL).setMethodCallHandler { call, result ->
@@ -567,7 +504,7 @@ class MainActivity: FlutterActivity() {
         keepAliveDeviceId = deviceId
         keepAliveUserPhone = userPhone
         
-        // Start foreground service in "main engine mode" (no HeadlessFlutter)
+        // Start foreground service in "main engine mode"
         val serviceIntent = Intent(this, ForegroundService::class.java).apply {
             action = ForegroundService.ACTION_START_MAIN_ENGINE_MODE
             putExtra(ForegroundService.EXTRA_DEVICE_ADDRESS, deviceId)

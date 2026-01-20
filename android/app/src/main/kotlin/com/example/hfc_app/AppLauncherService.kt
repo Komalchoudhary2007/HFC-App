@@ -12,21 +12,16 @@ import androidx.core.app.NotificationCompat
 /**
  * Foreground Service that can launch MainActivity from background
  * 
- * ENHANCED for Screen-ON launching:
- * - When screen is OFF: Uses full-screen intent (works great)
- * - When screen is ON: Uses SYSTEM_ALERT_WINDOW overlay trick
- * 
- * WHY OVERLAY WORKS ON SCREEN-ON:
- * - Android 10+ blocks startActivity() from background
- * - BUT activities started from overlay windows ARE allowed
- * - This is how Facebook Messenger chat heads work!
+ * Screen-aware launching:
+ * - When screen is OFF: Uses full-screen intent (works reliably)
+ * - When screen is ON: Also uses full-screen intent to avoid overlay permissions
  * 
  * FLOW:
  * 1. WorkManager/AlarmManager triggers → starts this service
  * 2. This service runs as foreground (shows notification)
  * 3. Check if screen is ON or OFF
- * 4. If OFF: Use full-screen intent (existing approach)
- * 5. If ON: Use overlay trick (new approach)
+ * 4. If OFF: Use full-screen intent
+ * 5. If ON: Use full-screen intent (no overlay)
  * 6. MainActivity opens and this service stops itself
  */
 class AppLauncherService : Service() {
@@ -81,16 +76,13 @@ class AppLauncherService : Service() {
         wakeLock.acquire(10000) // 10 seconds
         Log.d(TAG, "   ✅ Wake lock acquired - screen should turn on")
         
-        // Step 4: Choose launch method based on screen state
+        // Step 4: Use full-screen intent in both cases (overlay removed)
         if (isScreenOn) {
-            // SCREEN IS ON - Use overlay trick!
-            Log.d(TAG, "   🔆 Screen is ON - using OVERLAY method")
-            launchViaOverlay()
+            Log.d(TAG, "   🔆 Screen is ON - using FULL-SCREEN INTENT method")
         } else {
-            // SCREEN IS OFF - Use full-screen intent
             Log.d(TAG, "   🌙 Screen is OFF - using FULL-SCREEN INTENT method")
-            launchViaFullScreenIntent()
         }
+        launchViaFullScreenIntent()
         
         // Also try direct launch as backup
         try {
@@ -131,22 +123,6 @@ class AppLauncherService : Service() {
         }, 5000)
         
         return START_NOT_STICKY
-    }
-    
-    /**
-     * Launch via overlay when screen is ON
-     * This uses SYSTEM_ALERT_WINDOW permission to bypass Android 10+ restrictions
-     */
-    private fun launchViaOverlay() {
-        Log.d(TAG, "   🎨 Attempting overlay launch...")
-        
-        if (OverlayLauncher.hasOverlayPermission(this)) {
-            OverlayLauncher.launchAppViaOverlay(this)
-            Log.d(TAG, "   ✅ Overlay launch initiated")
-        } else {
-            Log.d(TAG, "   ⚠️ No overlay permission - trying full-screen intent as fallback")
-            launchViaFullScreenIntent()
-        }
     }
     
     /**

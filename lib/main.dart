@@ -15,10 +15,10 @@ import 'pages/login_page.dart';
 import 'services/auth_service.dart';
 import 'services/api_service.dart';
 import 'services/storage_service.dart';
-import 'services/background_isolate_service.dart';
 import 'services/background_sync_service.dart';
 import 'services/app_keepalive_service.dart';
 import 'services/main_engine_keepalive_service.dart';
+import 'services/background_service_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() async {
@@ -30,10 +30,10 @@ void main() async {
   // Check and request SCHEDULE_EXACT_ALARM permission (Android 12+)
   await _checkExactAlarmPermission();
   
-  // Initialize AlarmManager for most reliable keepalive (10-min interval)
+  // Initialize AlarmManager for most reliable keepalive (5-min interval)
   await AppKeepaliveService.initialize();
   await AppKeepaliveService.startPeriodicKeepalive();
-  print('✅ AlarmManager initialized - app will auto-restart every 10 min if closed');
+  print('✅ AlarmManager initialized - app will auto-restart every 5 min if closed');
   
   // Initialize WorkManager for background tasks (15-min interval)
   await BackgroundSyncService.initialize();
@@ -259,6 +259,8 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
   // Local notifications
   final FlutterLocalNotificationsPlugin _notificationsPlugin = FlutterLocalNotificationsPlugin();
   bool _notificationsInitialized = false;
+  // Feature-flag to control plugin-based background service (disabled on MIUI)
+  final bool _bgPluginEnabled = false;
 
   @override
   void initState() {
@@ -266,23 +268,15 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     WidgetsBinding.instance.addObserver(this);
     _initializeDio();
     _initializeNotifications();
+    if (_bgPluginEnabled) {
+      BackgroundServiceManager.instance.initialize();
+    }
     _enableBackgroundExecution();
     _checkAndShowBatteryOptimizationDialog();
-    _checkBluetoothAndInternetStatus();  // Initial check
-    _startBluetoothAndInternetMonitoring();  // Continuous monitoring
-    _loadSavedDevice();  // Load saved device for auto-reconnect
-    _updateBackgroundServiceWebhook();  // Configure webhook URL for background service
+    _checkBluetoothAndInternetStatus();
+    _startBluetoothAndInternetMonitoring();
+    _loadSavedDevice();
     // Note: HC20 client will be initialized when user clicks scan button
-  }
-  
-  // Update background service with webhook URL
-  Future<void> _updateBackgroundServiceWebhook() async {
-    try {
-      await BackgroundIsolateService.updateWebhookUrl(_webhookUrl);
-      print('✅ Background service webhook configured: $_webhookUrl');
-    } catch (e) {
-      print('⚠️ Failed to update background service webhook: $e');
-    }
   }
   
   // Load saved device ID for auto-reconnect
@@ -1290,6 +1284,16 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
       
       // Start Temperature auto-refresh (6 hours)
       _startTemperatureAutoRefresh();
+
+      // Start background keepalive service (flutter_background_service) — disabled
+      if (_bgPluginEnabled) {
+        try {
+          await BackgroundServiceManager.instance.start();
+          print('✅ BackgroundServiceManager started');
+        } catch (e) {
+          print('⚠️ BackgroundServiceManager failed to start: $e');
+        }
+      }
       
       // Background execution enabled via foreground service + wake lock
       print('✓ Data streaming started - webhooks will continue in background');
@@ -1297,11 +1301,10 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
       // Save device ID for auto-reconnect
       await _saveDeviceForAutoReconnect(device.id);
       
-      // Save connection state for WorkManager background sync
+      // Save connection state for background services
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('device_connected', true);
       await prefs.setString('saved_device_id', device.id);
-      // Also save with 'last_connected_device_id' key for background_main.dart
       await prefs.setString('last_connected_device_id', device.id);
       await prefs.setString('last_connected_device_name', device.name);
       
@@ -1351,11 +1354,6 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
       // Reset reconnection counter on successful connection
       _reconnectAttempts = 0;
       _isReconnecting = false;
-      
-      // Update background isolate service with device info (3-min interval testing)
-      print('📡 Updating background isolate service with device info...');
-      await BackgroundIsolateService.updateDeviceInfo(device.id, device.name, userPhone);
-      print('✅ Background isolate updated - will send webhooks every 3 minutes');
       
       // Show connection success notification
       _showConnectionRestoredNotification();
@@ -1576,12 +1574,12 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     );
     
     print('✓ Real-time stream subscription created and stored in _realtimeSubscription');
-    print('✓ Creating webhook timer (triggers every 120 seconds = 2 minutes)...');
+    print('✓ Creating webhook timer (triggers every 300 seconds = 5 minutes)...');
     
     // Set up periodic timer to trigger data refresh every 120 seconds (2 minutes) - TESTING MODE
     // ALWAYS sends webhooks - connected sends real data, disconnected sends null values
     // Backend can identify disconnect by null values and timestamp
-    _dataRefreshTimer = Timer.periodic(const Duration(seconds: 120), (timer) async {
+    _dataRefreshTimer = Timer.periodic(const Duration(seconds: 300), (timer) async {
       try {
         print('\n⏰ ========================================');
         print('⏰ [Timer] 10-minute webhook timer triggered');
@@ -1798,6 +1796,93 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
       }
     }
   }
+
+  // Convert HRV2 rows from SDK format to webhook JSON format
+  List<Map<String, dynamic>> _convertHrv2RowsToJson(List<dynamic> hrv2Rows) {
+    return hrv2Rows.map((row) {
+      final values = row.values ?? {};
+
+      DateTime? parsedDateTime;
+      try {
+        parsedDateTime = DateTime.parse(row.dateTime);
+      } catch (_) {
+        parsedDateTime = DateTime.now();
+      }
+
+      return {
+        'dateTime': row.dateTime,
+        'mental_stress': values['mentalStress'],
+        'fatigue_level': values['fatigue'],
+        'stress_resistance': values['stressResistance'],
+        'regulation_ability': values['regulationAbility'],
+        'valid': row.valid,
+      };
+    }).toList();
+  }
+
+  // Send HRV2 history data to webhook (automatic 6-hour or manual trigger)
+  Future<void> _sendHrv2ToWebhook(List<dynamic> hrv2Rows, String dateStr, {bool isAutomatic = false}) async {
+    if (_connectedDevice == null) return;
+
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final user = authService.currentUser;
+    final now = DateTime.now();
+
+    final hrv2JsonList = _convertHrv2RowsToJson(hrv2Rows);
+
+    final payload = {
+      'dataType': 'history',
+      'historyType': 'hrv2',
+      'source': isAutomatic ? 'auto_6hour_refresh' : 'manual_send',
+      'timestamp': now.toIso8601String(),
+      'device': {
+        'id': _connectedDevice!.id,
+        'name': _connectedDevice!.name,
+      },
+      'history_data': {
+        'hrv2': hrv2JsonList,
+        'phone': user?.phone ?? 'unknown',
+        'date': dateStr,
+        'recordCounts': {
+          'hrv2': hrv2JsonList.length,
+        }
+      },
+      'recordCounts': {
+        'hrv2': hrv2JsonList.length,
+      }
+    };
+
+    print('\n📤 ========================================');
+    print('📤 Sending HRV2 ${isAutomatic ? '(AUTO 6-hour)' : '(MANUAL)'} to webhook');
+    print('📤 URL: $_webhookUrl');
+    print('📤 Records: ${hrv2JsonList.length}');
+    print('📤 Phone: ${user?.phone ?? 'unknown'}');
+    print('📤 Source: ${isAutomatic ? 'Automatic 6-hour refresh' : 'Manual send button'}');
+    print('📤 ========================================\n');
+
+    try {
+      final response = await _dio.post(
+        _webhookUrl,
+        data: payload,
+      );
+
+      _webhookSuccessCount++;
+      _lastWebhookStatus = '✓ HRV2 history sent (${response.statusCode})';
+      _lastWebhookTime = DateTime.now();
+
+      print('✅ HRV2 webhook response: ${response.statusCode}');
+      print('✅ Backend received ${hrv2JsonList.length} HRV2 records');
+      print('✅ Response: ${response.data}');
+    } catch (e) {
+      _webhookErrorCount++;
+      _lastWebhookStatus = '✗ HRV2 history failed';
+      _lastWebhookError = e.toString();
+      _lastWebhookTime = DateTime.now();
+
+      print('❌ Error sending HRV2 to webhook: $e');
+      rethrow;
+    }
+  }
   
   Future<void> _fetchHrv2Data() async {
     if (_client == null || _connectedDevice == null) {
@@ -1829,6 +1914,13 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
       
       print('✅ HRV2 data fetched: ${hrv2Rows.length} records');
       print('✅ Data automatically uploaded to Nitto cloud by SDK');
+
+      if (hrv2Rows.isNotEmpty) {
+        print('📤 Also sending HRV2 to webhook...');
+        await _sendHrv2ToWebhook(hrv2Rows, dateStr, isAutomatic: true);
+      } else {
+        print('⚠️  No HRV2 records to send to webhook');
+      }
       
       print('✅ HRV2 refresh completed successfully\n');
     } catch (e) {
@@ -2814,19 +2906,6 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     } catch (e) {
       // Silently fail - native service may not be running
     }
-    
-    // Also update background isolate service with live health data
-    try {
-      await BackgroundIsolateService.sendHealthData({
-        'heartRate': data.heart,
-        'spo2': data.spo2,
-        'bloodPressure': data.bp != null && data.bp!.length >= 2 ? '${data.bp![0]}/${data.bp![1]}' : null,
-        'rri': data.rri,
-        'temperature': data.temperature != null && data.temperature!.length > 2 ? data.temperature![2] : null,
-      });
-    } catch (e) {
-      // Silently fail - background isolate service may not be running
-    }
   }
   
   Future<void> _disconnect() async {
@@ -2852,14 +2931,19 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
       } catch (e) {
         print('⚠️ Could not stop background service: $e');
       }
-      
-      // Cleanup all subscriptions and timers
-      _cleanup();
-      
+
+      // Stop flutter_background_service keepalive (disabled)
+      if (_bgPluginEnabled) {
+        try {
+          await BackgroundServiceManager.instance.stop();
+        } catch (e) {
+          print('⚠️ Could not stop BackgroundServiceManager: $e');
+        }
+      }
+
       await _client!.disconnect(_connectedDevice!);
+      
       setState(() {
-        _connectedDevice = null;
-        _isConnected = false;
         _connectionState = ConnectionState.disconnected;
         _statusMessage = 'Disconnected';
         _reconnectAttempts = 0;
@@ -3025,80 +3109,51 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
 
     try {
       setState(() {
-        _statusMessage = 'Fetching and sending history data to webhook...';
+        _statusMessage = 'Fetching and sending HRV2 history to webhook...';
       });
 
       final now = DateTime.now();
       final authService = Provider.of<AuthService>(context, listen: false);
       final user = authService.currentUser;
-      
-      // Get today's summary
-      final summaryRows = await _client!.getAllDaySummaryRows(
+
+      final dateStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+
+      // Fetch HRV2 history for today
+      final hrv2Rows = await _client!.getAllDayHrv2Rows(
         _connectedDevice!,
         yy: now.year % 100,
         mm: now.month,
         dd: now.day,
       );
 
-      // Get heart rate data
-      final heartRows = await _client!.getAllDayHeartRows(
-        _connectedDevice!,
-        yy: now.year % 100,
-        mm: now.month,
-        dd: now.day,
-      );
+      if (hrv2Rows.isEmpty) {
+        setState(() {
+          _statusMessage = 'No HRV2 records available to send';
+        });
 
-      // Get HRV data
-      final hrvRows = await _client!.getAllDayHrvRows(
-        _connectedDevice!,
-        yy: now.year % 100,
-        mm: now.month,
-        dd: now.day,
-      );
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('⚠️  No HRV2 records to send'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 3),
+          ),
+        );
+        return;
+      }
 
-      // Prepare history data payload
-      final payload = {
-        'phone': user?.phone ?? 'unknown',
-        'deviceId': _connectedDevice!.id,
-        'deviceName': _connectedDevice!.name,
-        'dataType': 'history',
-        'timestamp': now.toIso8601String(),
-        'date': '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}',
-        'summary': summaryRows.map((row) => row.toString()).toList(),
-        'heartRate': heartRows.map((row) => row.toString()).toList(),
-        'hrv': hrvRows.map((row) => row.toString()).toList(),
-        'recordCounts': {
-          'summary': summaryRows.length,
-          'heartRate': heartRows.length,
-          'hrv': hrvRows.length,
-        },
-      };
-
-      // Send to webhook
-      final response = await _dio.post(
-        _webhookUrl,
-        data: payload,
-        options: Options(
-          headers: {'Content-Type': 'application/json'},
-          sendTimeout: const Duration(seconds: 10),
-          receiveTimeout: const Duration(seconds: 10),
-        ),
-      );
+      await _sendHrv2ToWebhook(hrv2Rows, dateStr, isAutomatic: false);
 
       setState(() {
-        _webhookSuccessCount++;
-        _lastWebhookStatus = '✓ History Sent (${response.statusCode})';
-        _lastWebhookTime = DateTime.now();
-        _statusMessage = 'History data sent! ${summaryRows.length} summary, ${heartRows.length} heart, ${hrvRows.length} HRV records';
+        _statusMessage = 'HRV2 history sent to webhook (${hrv2Rows.length} records)';
       });
 
-      print('✅ History data sent to webhook successfully');
+      print('✅ HRV2 history data sent to webhook successfully');
 
-      // Show success dialog
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('✅ History data sent to webhook (${summaryRows.length + heartRows.length + hrvRows.length} records)'),
+          content: Text('✅ HRV2 history sent to webhook (${hrv2Rows.length} records)'),
           backgroundColor: Colors.green,
           duration: const Duration(seconds: 3),
         ),
@@ -3107,18 +3162,18 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     } catch (e) {
       setState(() {
         _webhookErrorCount++;
-        _lastWebhookStatus = '✗ History Failed';
+        _lastWebhookStatus = '✗ HRV2 history failed';
         _lastWebhookError = e.toString();
         _lastWebhookTime = DateTime.now();
-        _statusMessage = 'Failed to send history data: $e';
+        _statusMessage = 'Failed to send HRV2 history: $e';
       });
 
-      print('❌ Error sending history data to webhook: $e');
+      print('❌ Error sending HRV2 history data to webhook: $e');
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('❌ Failed to send history data: $e'),
+          content: Text('❌ Failed to send HRV2 history data: $e'),
           backgroundColor: Colors.red,
           duration: const Duration(seconds: 3),
         ),

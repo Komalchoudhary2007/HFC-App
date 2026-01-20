@@ -98,33 +98,6 @@ class ForegroundService : Service() {
         println("✅ [ForegroundService] Started with wake lock and BLE initialized")
     }
     
-    /**
-     * Start headless Flutter engine for background HC20 connection
-     * This keeps the HC20 SDK running even when UI is closed
-     */
-    private fun startHeadlessFlutter() {
-        // Get device info from SharedPreferences if not available from intent
-        if (deviceMacAddress == null || userPhone == null) {
-            val prefs = getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
-            if (deviceMacAddress == null) {
-                deviceMacAddress = prefs.getString("flutter.last_connected_device_id", null)
-            }
-            if (userPhone == null) {
-                userPhone = prefs.getString("flutter.user_phone", null)
-            }
-            println("📋 [ForegroundService] Loaded from prefs: device=$deviceMacAddress phone=$userPhone")
-        }
-        
-        if (!HeadlessFlutterService.isRunning()) {
-            println("🚀 [ForegroundService] Starting Headless Flutter Engine for HC20...")
-            println("   Device: $deviceMacAddress")
-            println("   Phone: $userPhone")
-            HeadlessFlutterService.start(applicationContext, deviceMacAddress, userPhone)
-        } else {
-            println("✅ [ForegroundService] Headless Flutter already running")
-        }
-    }
-    
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP_SERVICE -> {
@@ -134,7 +107,7 @@ class ForegroundService : Service() {
             }
             
             // ==================== MAIN ENGINE KEEP-ALIVE MODE ====================
-            // This is the NEW approach: keep main Flutter engine alive instead of HeadlessFlutter
+            // Keep main Flutter engine alive for continuous monitoring
             ACTION_START_MAIN_ENGINE_MODE -> {
                 isMainEngineMode = true
                 deviceMacAddress = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
@@ -177,8 +150,7 @@ class ForegroundService : Service() {
                     updateNotification("📡 Monitoring HC20 in background...")
                 }
                 
-                // DON'T start HeadlessFlutter - main engine handles everything!
-                // DON'T start periodic webhook - Flutter is still sending them!
+                // Flutter main engine handles HC20 connection and webhook transmission
                 
                 return START_STICKY
             }
@@ -249,7 +221,7 @@ class ForegroundService : Service() {
                 deviceMacAddress = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
                 userPhone = intent.getStringExtra(EXTRA_USER_PHONE)
                 
-                // Save to SharedPreferences so HeadlessFlutter can access them
+                // Save to SharedPreferences for service restart
                 val prefs = getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
                 prefs.edit().apply {
                     if (deviceMacAddress != null) {
@@ -268,10 +240,6 @@ class ForegroundService : Service() {
                 // Start periodic webhook sender (Flutter will provide data)
                 startPeriodicWebhook()
                 
-                // Start headless Flutter engine as backup for when UI is closed
-                // This keeps HC20 SDK running in background
-                startHeadlessFlutter()
-                
                 println("✅ [ForegroundService] Webhook sender started - waiting for data from Flutter")
             }
         }
@@ -284,15 +252,9 @@ class ForegroundService : Service() {
     
     /**
      * Called when user swipes away app from recent apps
-     * 
-     * CRITICAL FIX: When app is swiped away, the Flutter engine attached to MainActivity
-     * IS DESTROYED - ForegroundService cannot prevent that!
-     * 
-     * NEW APPROACH: Start NativeHC20Service (Pure Kotlin BLE) instead of HeadlessFlutter
-     * NativeHC20Service doesn't need Flutter engine at all!
      */
     override fun onTaskRemoved(rootIntent: Intent?) {
-        println("⚠️⚠️⚠️ [ForegroundService] APP SWIPED AWAY - Main Flutter Engine is DYING! ⚠️⚠️⚠️")
+        println("⚠️⚠️⚠️ [ForegroundService] APP SWIPED AWAY ⚠️⚠️⚠️")
         
         // Get saved device info from SharedPreferences
         val prefs = getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
@@ -303,22 +265,6 @@ class ForegroundService : Service() {
         println("   Device: $savedDeviceId")
         println("   Phone: $savedPhone")
         println("   Was Main Engine Mode: $wasMainEngineMode")
-        
-        // NEW: Start NativeHC20Service (Pure Kotlin BLE) - NO FLUTTER NEEDED!
-        // This is the ONLY approach that truly works when app is swiped away.
-        println("🚀🚀🚀 [ForegroundService] Starting NativeHC20Service (Pure Kotlin BLE)! 🚀🚀🚀")
-        println("   This service uses NATIVE Kotlin BLE - no Flutter engine needed!")
-        
-        if (!NativeHC20Service.isRunning()) {
-            println("   🔄 NativeHC20Service not running - starting now!")
-            NativeHC20Service.start(applicationContext, savedDeviceId, savedPhone)
-            println("   ✅ NativeHC20Service started!")
-        } else {
-            println("   ✅ NativeHC20Service already running - will continue HC20 monitoring")
-        }
-        
-        // Update notification to show we're in native mode
-        updateNotification("📡 HC20 monitoring via Native Kotlin BLE...")
         
         // Schedule restart using AlarmManager with device info as safety net
         val restartServiceIntent = Intent(applicationContext, ForegroundService::class.java).apply {
@@ -349,7 +295,6 @@ class ForegroundService : Service() {
     
     override fun onDestroy() {
         println("⚠️ [ForegroundService] onDestroy called - scheduling restart...")
-        println("✅ [ForegroundService] NativeHC20Service runs INDEPENDENTLY - will NOT be affected")
         
         // Get saved device info from SharedPreferences
         val prefs = getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
@@ -380,12 +325,6 @@ class ForegroundService : Service() {
         
         stopBleConnection()
         stopPeriodicWebhook()
-        
-        // NOTE: Don't stop HeadlessFlutter here!
-        // We want it to keep running for HC20 SDK connection
-        // The service will restart in 1 second anyway
-        // HeadlessFlutterService.stop()  <- Commented out intentionally
-        println("   HeadlessFlutter kept running: ${HeadlessFlutterService.isRunning()}")
         
         wakeLock?.release()
         println("🛑 [ForegroundService] Stopped - restart scheduled in 1s")
@@ -576,9 +515,6 @@ class ForegroundService : Service() {
         // Check if we have recent data from Flutter
         val hasData = heartRate != null || spo2 != null
         
-        // Get HeadlessFlutter status
-        val isHeadlessRunning = HeadlessFlutterService.isRunning()
-        
         // Format timestamps for readability
         val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX", java.util.Locale.getDefault())
         val now = System.currentTimeMillis()
@@ -590,7 +526,7 @@ class ForegroundService : Service() {
             put("deviceId", deviceMacAddress)
             put("timestamp", now)
             put("timestampReadable", readableTimestamp)
-            put("source", "NATIVE_SERVICE")
+            put("source", "FOREGROUND_SERVICE")
             put("method", "android_foreground_service")
             put("interval", "2_minutes")
             put("dataSource", if (hasData) "flutter_realtime" else "no_data_yet")
@@ -604,26 +540,21 @@ class ForegroundService : Service() {
             put("batteryLevel", batteryLevel)
             put("bluetoothStatus", if (bluetoothAdapter?.isEnabled == true) "ON" else "OFF")
             
-            // HeadlessFlutter status - explains why live data (webhook 2) may not be coming
-            put("headlessFlutterRunning", isHeadlessRunning)
-            
-            // Build explanation message
+            // Build status message
             val message = when {
-                !hasData && !isHeadlessRunning -> "HeadlessFlutter NOT running - cannot connect to HC20 device for live data. Live data webhook will not be sent."
-                !hasData && isHeadlessRunning -> "HeadlessFlutter running but no data yet - HC20 SDK may be connecting. Live data webhook should arrive soon."
+                !hasData -> "Waiting for Flutter to provide HC20 data"
                 isDataFresh -> "Live data from Flutter (${dataAge/1000}s ago)"
-                else -> "Stale data from Flutter (${dataAge/1000}s ago) - app UI closed, HeadlessFlutter running: $isHeadlessRunning"
+                else -> "Stale data from Flutter (${dataAge/1000}s ago) - app may be closed"
             }
             put("message", message)
             
-            // Add detailed status for debugging
-            val liveDataStatus = when {
-                !isHeadlessRunning -> "BLOCKED - HeadlessFlutter engine not started"
-                !hasData -> "PENDING - HeadlessFlutter started, waiting for HC20 SDK to connect and stream data"
+            // Data status for debugging
+            val dataStatus = when {
+                !hasData -> "NO_DATA - Waiting for Flutter HC20 connection"
                 isDataFresh -> "ACTIVE - Live data flowing"
                 else -> "STALE - Last data received ${dataAge/1000}s ago"
             }
-            put("liveDataWebhookStatus", liveDataStatus)
+            put("dataStatus", dataStatus)
         }
         
         val body = json.toString().toRequestBody("application/json".toMediaType())

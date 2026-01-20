@@ -21,7 +21,7 @@ class AppKeepaliveService {
     }
   }
   
-  /// Start periodic app keepalive (every 10 minutes)
+  /// Start periodic app keepalive (every 5 minutes)
   /// This will:
   /// 1. Check if app is running
   /// 2. If not running, launch the app  
@@ -35,7 +35,7 @@ class AppKeepaliveService {
       
       // Then start periodic Dart callback
       await AndroidAlarmManager.periodic(
-        const Duration(minutes: 10),
+        const Duration(minutes: 5),
         _alarmId,
         _keepaliveCallback,
         wakeup: true,  // Wake device if sleeping
@@ -43,7 +43,7 @@ class AppKeepaliveService {
         rescheduleOnReboot: true,  // Restart after device reboot
       );
       
-      print('✅ [AppKeepalive] Periodic keepalive started (10-min interval)');
+      print('✅ [AppKeepalive] Periodic keepalive started (5-min interval)');
       print('   Native restart alarm: 5-min interval');
       print('   Will auto-launch app if closed');
       print('   Will wake device if sleeping');

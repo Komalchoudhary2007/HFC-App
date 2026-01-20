@@ -13,8 +13,6 @@
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <!-- Required to turn on screen when launching app -->
     <uses-permission android:name="android.permission.DISABLE_KEYGUARD" />
-    <!-- System alert window as backup for overlay -->
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     
     <application
         android:label="hfc_app"
@@ -52,6 +50,13 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- Background service for flutter_background_service plugin -->
+        <service
+            android:name="id.flutter.flutter_background_service.BackgroundService"
+            android:foregroundServiceType="dataSync"
+            android:exported="true"
+            tools:replace="android:exported" />
         
         <!-- Foreground Service for background webhook transmission -->
         <!-- android:stopWithTask="false" prevents service from stopping when app is swiped away -->
@@ -68,15 +73,6 @@
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
-        
-        <!-- Native HC20 Service - Pure Kotlin BLE for background HC20 monitoring -->
-        <!-- This is the ONLY approach that works when app is swiped away -->
-        <service
-            android:name=".NativeHC20Service"
-            android:enabled="true"
-            android:exported="false"
-            android:foregroundServiceType="dataSync"
-            android:stopWithTask="false" />
         
         <!-- Receiver for boot completed - autostart app -->
         <receiver

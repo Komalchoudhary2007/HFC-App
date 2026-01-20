@@ -10,7 +10,7 @@ import android.os.SystemClock
 
 class SyncAlarmReceiver : BroadcastReceiver() {
     companion object {
-        private const val SYNC_INTERVAL = 10 * 60 * 1000L // 10 minutes
+        private const val SYNC_INTERVAL = 5 * 60 * 1000L // 5 minutes
         
         fun scheduleSync(context: Context) {
             val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
