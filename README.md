@@ -60,3 +60,10 @@ For detailed development process and architecture information, see [`docs/README
 ---
 
 Built with ❤️ using Flutter
+
+Git Commands
+See all modified files: git status
+See changes in all files: git diff
+See staged changes: git diff --staged
+
+git diff android/app/src/main/kotlin/com/example/hfc_app/AppRestartWorker.kt

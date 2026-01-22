@@ -266,6 +266,36 @@ class MainActivity: FlutterActivity() {
         
         // Check if device is from a manufacturer that requires autostart permission
         val manufacturer = Build.MANUFACTURER.lowercase()
+        
+        // Samsung does NOT have autostart permission - show battery optimization instructions instead
+        if (manufacturer.contains("samsung")) {
+            AlertDialog.Builder(this)
+                .setTitle("Samsung Setup for Background Connection")
+                .setMessage("For continuous HC20 device monitoring:\n\n" +
+                    "1. Settings → Battery and device care → Battery\n" +
+                    "2. Tap \"Background usage limits\"\n" +
+                    "3. Ensure HFC App is NOT in:\n" +
+                    "   • Sleeping apps\n" +
+                    "   • Deep sleeping apps\n\n" +
+                    "4. Go to: Settings → Apps → HFC App → Battery\n" +
+                    "5. Set to \"Unrestricted\"\n\n" +
+                    "✅ Your app will stay connected in background!\n\n" +
+                    "Note: NO \"Autostart\" permission needed on Samsung!")
+                .setPositiveButton("Open Settings") { _, _ ->
+                    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                        data = Uri.parse("package:$packageName")
+                    }
+                    startActivity(intent)
+                    prefs.edit().putBoolean("has_shown_autostart_guidance", true).apply()
+                }
+                .setNegativeButton("Later") { _, _ ->
+                    prefs.edit().putBoolean("has_shown_autostart_guidance", true).apply()
+                }
+                .setCancelable(false)
+                .show()
+            return
+        }
+        
         val needsAutostartGuidance = manufacturer.contains("xiaomi") ||
                                      manufacturer.contains("oppo") ||
                                      manufacturer.contains("vivo") ||

@@ -1459,7 +1459,7 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     print('🚀 Starting real-time data stream for device: ${device.name}');
     print('🚀 Device ID: ${device.id}');
     print('🚀 Webhook URL: $_webhookUrl');
-    print('🚀 Data refresh: Every 120 seconds (2 minutes) - TESTING MODE');
+    print('🚀 Data refresh: At exact 5-minute intervals (00, 05, 10, 15, 20, etc.)');
     print('🚀 ========================================\n');
     
     // Subscribe and KEEP the subscription reference
@@ -1523,11 +1523,12 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
         } else if (!_isLowBattery && _lowBatteryAlertSent) {
           // Reset flag when battery is OK
           _lowBatteryAlertSent = false;
-        } else {
-          // Send regular webhook (non-blocking)
-          print('📤 Sending regular webhook at $_webhookUrl...');
-          _sendDataToWebhook(device, data);
-        }
+        } 
+        // else {
+        //   // Send regular webhook (non-blocking)
+        //   print('📤 Sending regular webhook at $_webhookUrl...');
+        //   _sendDataToWebhook(device, data);
+        // }
         
         // Update native service with live data for background sync
         _updateNativeServiceData(device, data);
@@ -1574,22 +1575,31 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     );
     
     print('✓ Real-time stream subscription created and stored in _realtimeSubscription');
-    print('✓ Creating webhook timer (triggers every 300 seconds = 5 minutes)...');
     
-    // Set up periodic timer to trigger data refresh every 120 seconds (2 minutes) - TESTING MODE
-    // ALWAYS sends webhooks - connected sends real data, disconnected sends null values
-    // Backend can identify disconnect by null values and timestamp
-    _dataRefreshTimer = Timer.periodic(const Duration(seconds: 300), (timer) async {
+    // Calculate delay until next 5-minute mark (00, 05, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55)
+    final now = DateTime.now();
+    final currentMinute = now.minute;
+    final currentSecond = now.second;
+    
+    // Find next 5-minute interval
+    final nextInterval = ((currentMinute ~/ 5) + 1) * 5;
+    final minutesUntilNext = nextInterval - currentMinute;
+    final secondsUntilNext = (minutesUntilNext * 60) - currentSecond;
+    
+    print('✓ Current time: ${now.hour}:${currentMinute.toString().padLeft(2, '0')}:${currentSecond.toString().padLeft(2, '0')}');
+    print('✓ Next webhook at: ${now.hour}:${(nextInterval % 60).toString().padLeft(2, '0')}:00 (in $secondsUntilNext seconds)');
+    
+    // Helper function for webhook execution
+    Future<void> executeWebhook() async {
       try {
+        final triggerTime = DateTime.now();
         print('\n⏰ ========================================');
-        print('⏰ [Timer] 10-minute webhook timer triggered');
+        print('⏰ [Timer] 5-minute webhook triggered at ${triggerTime.hour}:${triggerTime.minute.toString().padLeft(2, '0')}:${triggerTime.second.toString().padLeft(2, '0')}');
         print('⏰ Status: ${_isConnected ? "CONNECTED" : "DISCONNECTED"}');
         print('⏰ ========================================');
         
         if (_isConnected && _connectedDevice != null) {
           print('   ✅ Device connected - requesting fresh data from device...');
-          // Create a temporary subscription to trigger new data request
-          // This will trigger the realtime stream, which sends webhook with actual device data
           try {
             _client!.realtimeV2(device).listen(
               (data) {
@@ -1604,13 +1614,11 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
           }
         } else {
           print('   ⚠️ Device DISCONNECTED - sending NULL webhook with disconnect reason...');
-          // Check if it's network or device disconnect
           try {
             final authService = Provider.of<AuthService>(context, listen: false);
             final user = authService.currentUser;
             
             if (user != null) {
-              // Try to determine disconnect reason
               bool isNetworkIssue = await _checkNetworkConnectivity();
               String disconnectReason = isNetworkIssue ? 'Network Disconnect' : 'Device Disconnect';
               print('   📤 Sending disconnect webhook: $disconnectReason');
@@ -1628,11 +1636,25 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
         print('   ❌ CRITICAL ERROR in timer callback: $e');
         print('   Stack trace: ${StackTrace.current}');
       }
+    }
+    
+    // Schedule first webhook at next 5-minute mark, then set up periodic timer
+    Future.delayed(Duration(seconds: secondsUntilNext), () {
+      if (!mounted) return;
+      
+      // Execute first webhook at aligned time
+      executeWebhook();
+      
+      // Set up periodic timer for subsequent 5-minute intervals
+      _dataRefreshTimer = Timer.periodic(const Duration(minutes: 5), (timer) async {
+        await executeWebhook();
+      });
+      
+      print('✓ Webhook timer now running at exact 5-minute intervals (00, 05, 10, 15, etc.)\n');
     });
     
-    print('✓ Webhook timer active - triggers every 120 seconds (2 minutes) - TESTING MODE');
-    print('✓ Connected: sends device data | Disconnected: sends null values with error type');
-    print('✓ Backend identifies disconnects by null values and error message\n');
+    print('✓ Webhook timer scheduled - will align to exact 5-minute marks');
+    print('✓ Connected: sends device data | Disconnected: sends null values with error type\n');
   }
   
   void _startHrvAutoRefresh() {
@@ -1799,7 +1821,9 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
 
   // Convert HRV2 rows from SDK format to webhook JSON format
   List<Map<String, dynamic>> _convertHrv2RowsToJson(List<dynamic> hrv2Rows) {
-    return hrv2Rows.map((row) {
+    return hrv2Rows
+        .where((row) => row.valid == true)  // Filter only valid records
+        .map((row) {
       final values = row.values ?? {};
 
       DateTime? parsedDateTime;
@@ -1820,8 +1844,135 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     }).toList();
   }
 
-  // Send HRV2 history data to webhook (automatic 6-hour or manual trigger)
-  Future<void> _sendHrv2ToWebhook(List<dynamic> hrv2Rows, String dateStr, {bool isAutomatic = false}) async {
+  // Convert HRV rows from SDK format to webhook JSON format
+  List<Map<String, dynamic>> _convertHrvRowsToJson(List<dynamic> hrvRows) {
+    return hrvRows
+        .where((row) => row.valid == true)
+        .map((row) {
+      final values = row.values ?? {};
+      return {
+        'dateTime': row.dateTime,
+        'sdnn': values['sdnn'],
+        'tp': values['tp'],
+        'lf': values['lf'],
+        'hf': values['hf'],
+        'vlf': values['vlf'],
+      };
+    }).toList();
+  }
+
+  // Convert BP rows from SDK format to webhook JSON format
+  List<Map<String, dynamic>> _convertBpRowsToJson(List<dynamic> bpRows) {
+    return bpRows
+        .where((row) => row.valid == true)
+        .map((row) {
+      final values = row.values ?? {};
+      return {
+        'dateTime': row.dateTime,
+        'sys': values['sys'],
+        'dia': values['dia'],
+      };
+    }).toList();
+  }
+
+  // Convert SpO2 rows from SDK format to webhook JSON format
+  List<Map<String, dynamic>> _convertSpo2RowsToJson(List<dynamic> spo2Rows) {
+    return spo2Rows
+        .where((row) => row.valid == true)
+        .map((row) {
+      final values = row.values ?? {};
+      return {
+        'dateTime': row.dateTime,
+        'spo2Pct': values['spo2Pct'],
+      };
+    }).toList();
+  }
+
+  // Convert Steps rows from SDK format to webhook JSON format
+  List<Map<String, dynamic>> _convertStepsRowsToJson(List<dynamic> stepsRows) {
+    return stepsRows
+        .where((row) => row.valid == true)
+        .map((row) {
+      final values = row.values ?? {};
+      return {
+        'dateTime': row.dateTime,
+        'steps': values['steps'],
+      };
+    }).toList();
+  }
+
+// Convert Summary rows from SDK format to webhook JSON format
+List<Map<String, dynamic>> _convertSummaryRowsToJson(List<dynamic> summaryRows) {
+  return summaryRows
+      .where((row) => row.valid == true)
+      .map((row) {
+    final values = row.values ?? {};
+    return {
+      'dateTime': row.dateTime,
+      'steps': values['steps'] ?? values['stepsTotal'],  // ⚠️ Check which one SDK uses
+      'calories': values['calories'] ?? values['caloriesTotalKcal'],  // ⚠️ Check which one
+      'distance': values['distance'],
+      'activeTime': values['activeTime'],
+      'silentTime': values['silentTime'],
+    };
+  }).toList();
+}
+
+  // Convert Calories rows from SDK format to webhook JSON format
+  List<Map<String, dynamic>> _convertCaloriesRowsToJson(List<dynamic> caloriesRows) {
+    return caloriesRows
+        .where((row) => row.valid == true)
+        .map((row) {
+      final values = row.values ?? {};
+      return {
+        'dateTime': row.dateTime,
+        'kcal': values['kcal'],  // ✅ Correct field name
+      };
+    }).toList();
+  }
+
+  // Convert Sleep rows from SDK format to webhook JSON format
+// Convert Sleep rows from SDK format to webhook JSON format
+List<Map<String, dynamic>> _convertSleepRowsToJson(List<dynamic> sleepRows) {
+  return sleepRows
+      .where((row) => row.valid == true)
+      .map((row) {
+    final values = row.values ?? {};
+    
+    // Check if it's a summary row or detail row
+    if (values.containsKey('sleepState')) {
+      // Detail row
+      return {
+        'dateTime': row.dateTime,
+        'sleepState': values['sleepState'],  // 'awake', 'light', 'deep', 'rem'
+      };
+    } else {
+      // Summary row
+      return {
+        'dateTime': row.dateTime,
+        'soberMin': values['soberMin'],
+        'lightMin': values['lightMin'],
+        'deepMin': values['deepMin'],
+        'remMin': values['remMin'],
+        'napMin': values['napMin'],
+      };
+    }
+  }).toList();
+}
+
+  // Send history data (HRV2, HRV, BP, SpO2, Steps, Summary, Calories, Sleep) to webhook
+  Future<void> _sendHistoryToWebhook({
+    required List<dynamic> hrv2Rows,
+    required List<dynamic> hrvRows,
+    required List<dynamic> bpRows,
+    required List<dynamic> spo2Rows,
+    required List<dynamic> stepsRows,
+    required List<dynamic> summaryRows,
+    required List<dynamic> caloriesRows,
+    required List<dynamic> sleepRows,
+    required String dateStr,
+    bool isAutomatic = false,
+  }) async {
     if (_connectedDevice == null) return;
 
     final authService = Provider.of<AuthService>(context, listen: false);
@@ -1829,33 +1980,54 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     final now = DateTime.now();
 
     final hrv2JsonList = _convertHrv2RowsToJson(hrv2Rows);
+    final hrvJsonList = _convertHrvRowsToJson(hrvRows);
+    final bpJsonList = _convertBpRowsToJson(bpRows);
+    final spo2JsonList = _convertSpo2RowsToJson(spo2Rows);
+    final stepsJsonList = _convertStepsRowsToJson(stepsRows);
+    final summaryJsonList = _convertSummaryRowsToJson(summaryRows);
+    final caloriesJsonList = _convertCaloriesRowsToJson(caloriesRows);
+    final sleepJsonList = _convertSleepRowsToJson(sleepRows);
 
     final payload = {
       'dataType': 'history',
-      'historyType': 'hrv2',
+      'historyType': 'all',
       'source': isAutomatic ? 'auto_6hour_refresh' : 'manual_send',
       'timestamp': now.toIso8601String(),
+      'date': dateStr,
+      'user': {
+        'id': user?.id ?? 'unknown',
+        'name': user?.name ?? 'unknown',
+      },
       'device': {
         'id': _connectedDevice!.id,
         'name': _connectedDevice!.name,
       },
       'history_data': {
         'hrv2': hrv2JsonList,
-        'phone': user?.phone ?? 'unknown',
-        'date': dateStr,
-        'recordCounts': {
-          'hrv2': hrv2JsonList.length,
-        }
+        'hrv': hrvJsonList,
+        'bp': bpJsonList,
+        'spo2': spo2JsonList,
+        'steps': stepsJsonList,
+        'calories': caloriesJsonList,
+        'sleep': sleepJsonList,
+        'summary': summaryJsonList,
       },
       'recordCounts': {
         'hrv2': hrv2JsonList.length,
+        'hrv': hrvJsonList.length,
+        'bp': bpJsonList.length,
+        'spo2': spo2JsonList.length,
+        'steps': stepsJsonList.length,
+        'calories': caloriesJsonList.length,
+        'sleep': sleepJsonList.length,
+        'summary': summaryJsonList.length,
       }
     };
 
     print('\n📤 ========================================');
-    print('📤 Sending HRV2 ${isAutomatic ? '(AUTO 6-hour)' : '(MANUAL)'} to webhook');
+    print('📤 Sending History ${isAutomatic ? '(AUTO 6-hour)' : '(MANUAL)'} to webhook');
     print('📤 URL: $_webhookUrl');
-    print('📤 Records: ${hrv2JsonList.length}');
+    print('📤 Records: HRV2=${hrv2JsonList.length}, HRV=${hrvJsonList.length}, BP=${bpJsonList.length}, SpO2=${spo2JsonList.length}, Steps=${stepsJsonList.length}, Summary=${summaryJsonList.length}, Calories=${caloriesJsonList.length}, Sleep=${sleepJsonList.length}');
     print('📤 Phone: ${user?.phone ?? 'unknown'}');
     print('📤 Source: ${isAutomatic ? 'Automatic 6-hour refresh' : 'Manual send button'}');
     print('📤 ========================================\n');
@@ -1867,26 +2039,26 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
       );
 
       _webhookSuccessCount++;
-      _lastWebhookStatus = '✓ HRV2 history sent (${response.statusCode})';
+      _lastWebhookStatus = '✓ History sent (${response.statusCode})';
       _lastWebhookTime = DateTime.now();
 
-      print('✅ HRV2 webhook response: ${response.statusCode}');
-      print('✅ Backend received ${hrv2JsonList.length} HRV2 records');
+      print('✅ History webhook response: ${response.statusCode}');
+      print('✅ Backend received all history records');
       print('✅ Response: ${response.data}');
     } catch (e) {
       _webhookErrorCount++;
-      _lastWebhookStatus = '✗ HRV2 history failed';
+      _lastWebhookStatus = '✗ History failed';
       _lastWebhookError = e.toString();
       _lastWebhookTime = DateTime.now();
 
-      print('❌ Error sending HRV2 to webhook: $e');
+      print('❌ Error sending history to webhook: $e');
       rethrow;
     }
   }
   
   Future<void> _fetchHrv2Data() async {
     if (_client == null || _connectedDevice == null) {
-      print('⚠️  [HRV2 Fetch] No device connected');
+      print('⚠️  [History Fetch] No device connected');
       return;
     }
     
@@ -1898,37 +2070,111 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
       final dateStr = '${now.year}-${mm.toString().padLeft(2, '0')}-${dd.toString().padLeft(2, '0')}';
       
       print('\n📊 ========================================');
-      print('📊 Fetching HRV2 data for $dateStr');
+      print('📊 Fetching History data for $dateStr');
       print('📊 Device: ${_connectedDevice!.name}');
+      print('📊 Data types: HRV2, HRV, BP, SpO2, Steps, Summary, Calories, Sleep');
       print('📊 Note: SDK automatically uploads to Nitto cloud');
       print('📊 ========================================');
       
-      // Fetch HRV2 data from device
-      // This automatically triggers upload to Nitto cloud server
+      // Fetch all data types from device
+      print('📊 Fetching HRV2...');
       final hrv2Rows = await _client!.getAllDayHrv2Rows(
         _connectedDevice!,
         yy: yy,
         mm: mm,
         dd: dd,
       );
+      print('✅ HRV2: ${hrv2Rows.length} records');
       
-      print('✅ HRV2 data fetched: ${hrv2Rows.length} records');
+      print('📊 Fetching HRV...');
+      final hrvRows = await _client!.getAllDayHrvRows(
+        _connectedDevice!,
+        yy: yy,
+        mm: mm,
+        dd: dd,
+      );
+      print('✅ HRV: ${hrvRows.length} records');
+      
+      print('📊 Fetching BP...');
+      final bpRows = await _client!.getAllDayBpRows(
+        _connectedDevice!,
+        yy: yy,
+        mm: mm,
+        dd: dd,
+      );
+      print('✅ BP: ${bpRows.length} records');
+      
+      print('📊 Fetching SpO2...');
+      final spo2Rows = await _client!.getAllDaySpo2Rows(
+        _connectedDevice!,
+        yy: yy,
+        mm: mm,
+        dd: dd,
+      );
+      print('✅ SpO2: ${spo2Rows.length} records');
+      
+      print('📊 Fetching Steps...');
+      final stepsRows = await _client!.getAllDayStepsRows(
+        _connectedDevice!,
+        yy: yy,
+        mm: mm,
+        dd: dd,
+      );
+      print('✅ Steps: ${stepsRows.length} records');
+      
+      print('📊 Fetching Summary...');
+      final summaryRows = await _client!.getAllDaySummaryRows(
+        _connectedDevice!,
+        yy: yy,
+        mm: mm,
+        dd: dd,
+      );
+      print('✅ Summary: ${summaryRows.length} records');
+      
+      print('📊 Fetching Calories...');
+      final caloriesRows = await _client!.getAllDayCaloriesRows(
+        _connectedDevice!,
+        yy: yy,
+        mm: mm,
+        dd: dd,
+      );
+      print('✅ Calories: ${caloriesRows.length} records');
+      
+      print('📊 Fetching Sleep...');
+      final sleepRows = await _client!.getAllDaySleepRows(
+        _connectedDevice!,
+        yy: yy,
+        mm: mm,
+        dd: dd,
+        includeSummary: false,  // ✅ ADD THIS
+      );
+      print('✅ Sleep: ${sleepRows.length} records');
+      
+      print('✅ All data fetched successfully');
       print('✅ Data automatically uploaded to Nitto cloud by SDK');
 
-      if (hrv2Rows.isNotEmpty) {
-        print('📤 Also sending HRV2 to webhook...');
-        await _sendHrv2ToWebhook(hrv2Rows, dateStr, isAutomatic: true);
-      } else {
-        print('⚠️  No HRV2 records to send to webhook');
-      }
+      // Send to webhook even if some data is empty
+      print('📤 Sending all history data to webhook...');
+      await _sendHistoryToWebhook(
+        hrv2Rows: hrv2Rows,
+        hrvRows: hrvRows,
+        bpRows: bpRows,
+        spo2Rows: spo2Rows,
+        stepsRows: stepsRows,
+        summaryRows: summaryRows,
+        caloriesRows: caloriesRows,
+        sleepRows: sleepRows,
+        dateStr: dateStr,
+        isAutomatic: true,
+      );
       
-      print('✅ HRV2 refresh completed successfully\n');
+      print('✅ History refresh completed successfully\n');
     } catch (e) {
-      print('❌ Error fetching HRV2 data: $e');
+      print('❌ Error fetching history data: $e');
       
       // Handle specific error codes
       if (e.toString().contains('0xE2') || e.toString().contains('0xe2')) {
-        print('ℹ️  Device reported no HRV2 data available');
+        print('ℹ️  Device reported no history data available');
       }
     }
   }
@@ -3109,32 +3355,47 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
 
     try {
       setState(() {
-        _statusMessage = 'Fetching and sending HRV2 history to webhook...';
+        _statusMessage = 'Fetching and sending all history data to webhook...';
       });
 
       final now = DateTime.now();
       final authService = Provider.of<AuthService>(context, listen: false);
       final user = authService.currentUser;
 
-      final dateStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+      // final dateStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+      // final yy = now.year % 100;
+      // final mm = now.month;
+      // final dd = now.day;
 
-      // Fetch HRV2 history for today
-      final hrv2Rows = await _client!.getAllDayHrv2Rows(
-        _connectedDevice!,
-        yy: now.year % 100,
-        mm: now.month,
-        dd: now.day,
-      );
+      // AFTER (change to Jan 20, 2026 for testing):
+      final dateStr = '2026-01-20';  // Hardcoded for testing
+      final yy = 26;  // 2026 % 100 = 26
+      final mm = 1;   // January
+      final dd = 20;  // 20th
 
-      if (hrv2Rows.isEmpty) {
+      // Fetch all history data types
+      print('📊 Fetching all history data...');
+      
+      final hrv2Rows = await _client!.getAllDayHrv2Rows(_connectedDevice!, yy: yy, mm: mm, dd: dd);
+      final hrvRows = await _client!.getAllDayHrvRows(_connectedDevice!, yy: yy, mm: mm, dd: dd);
+      final bpRows = await _client!.getAllDayBpRows(_connectedDevice!, yy: yy, mm: mm, dd: dd);
+      final spo2Rows = await _client!.getAllDaySpo2Rows(_connectedDevice!, yy: yy, mm: mm, dd: dd);
+      final stepsRows = await _client!.getAllDayStepsRows(_connectedDevice!, yy: yy, mm: mm, dd: dd);
+      final summaryRows = await _client!.getAllDaySummaryRows(_connectedDevice!, yy: yy, mm: mm, dd: dd);
+      final caloriesRows = await _client!.getAllDayCaloriesRows(_connectedDevice!, yy: yy, mm: mm, dd: dd);
+      final sleepRows = await _client!.getAllDaySleepRows(_connectedDevice!, yy: yy, mm: mm, dd: dd, includeSummary: false);
+
+      final totalRecords = hrv2Rows.length + hrvRows.length + bpRows.length + spo2Rows.length + stepsRows.length + summaryRows.length + caloriesRows.length + sleepRows.length;
+      
+      if (totalRecords == 0) {
         setState(() {
-          _statusMessage = 'No HRV2 records available to send';
+          _statusMessage = 'No history records available to send';
         });
 
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('⚠️  No HRV2 records to send'),
+            content: Text('⚠️  No history records to send'),
             backgroundColor: Colors.orange,
             duration: Duration(seconds: 3),
           ),
@@ -3142,38 +3403,49 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
         return;
       }
 
-      await _sendHrv2ToWebhook(hrv2Rows, dateStr, isAutomatic: false);
+      await _sendHistoryToWebhook(
+        hrv2Rows: hrv2Rows,
+        hrvRows: hrvRows,
+        bpRows: bpRows,
+        spo2Rows: spo2Rows,
+        stepsRows: stepsRows,
+        summaryRows: summaryRows,
+        caloriesRows: caloriesRows,
+        sleepRows: sleepRows,
+        dateStr: dateStr,
+        isAutomatic: false,
+      );
 
       setState(() {
-        _statusMessage = 'HRV2 history sent to webhook (${hrv2Rows.length} records)';
+        _statusMessage = 'All history data sent to webhook ($totalRecords total records)';
       });
 
-      print('✅ HRV2 history data sent to webhook successfully');
+      print('✅ All history data sent to webhook successfully');
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('✅ HRV2 history sent to webhook (${hrv2Rows.length} records)'),
+          content: Text('✅ History sent: HRV2=${hrv2Rows.length}, HRV=${hrvRows.length}, BP=${bpRows.length}, SpO2=${spo2Rows.length}, Steps=${stepsRows.length}, Summary=${summaryRows.length}, Calories=${caloriesRows.length}, Sleep=${sleepRows.length}'),
           backgroundColor: Colors.green,
-          duration: const Duration(seconds: 3),
+          duration: const Duration(seconds: 4),
         ),
       );
 
     } catch (e) {
       setState(() {
         _webhookErrorCount++;
-        _lastWebhookStatus = '✗ HRV2 history failed';
+        _lastWebhookStatus = '✗ History failed';
         _lastWebhookError = e.toString();
         _lastWebhookTime = DateTime.now();
-        _statusMessage = 'Failed to send HRV2 history: $e';
+        _statusMessage = 'Failed to send history: $e';
       });
 
-      print('❌ Error sending HRV2 history data to webhook: $e');
+      print('❌ Error sending history data to webhook: $e');
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('❌ Failed to send HRV2 history data: $e'),
+          content: Text('❌ Failed to send history data: $e'),
           backgroundColor: Colors.red,
           duration: const Duration(seconds: 3),
         ),
@@ -3388,6 +3660,7 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
                             fontSize: 11,
                             fontFamily: 'monospace',
                           ),
+                          overflow: TextOverflow.ellipsis,
                         ),
                         const SizedBox(height: 4),
                         Text(
@@ -4075,8 +4348,8 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
                             Text(
                               'Last sync: ${_lastWebhookTime!.hour}:${_lastWebhookTime!.minute.toString().padLeft(2, '0')}:${_lastWebhookTime!.second.toString().padLeft(2, '0')}',
                               style: const TextStyle(
-                                color: Colors.white60,
-                                fontSize: 11,
+                                fontSize: 12,
+                                color: Colors.grey,
                               ),
                             ),
                           ],
