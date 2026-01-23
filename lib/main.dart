@@ -217,6 +217,7 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
   int? _steps;
   bool _stressAlertPending = false;  // Flag to send stress alert on next data
   StreamSubscription? _realtimeSubscription;
+  StreamSubscription? _scanSubscription;  // Manual scan subscription
   Timer? _dataRefreshTimer;
   Timer? _connectionMonitor;
   Timer? _hrvRefreshTimer;  // Timer for 6-hour HRV refresh
@@ -1116,7 +1117,10 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
       _statusMessage = 'Scanning for HC20 devices...';
     });
 
-    _client!.scan().listen(
+    // Cancel any existing scan subscription
+    _scanSubscription?.cancel();
+
+    _scanSubscription = _client!.scan().listen(
       (device) {
         if (!_discoveredDevices.any((d) => d.id == device.id)) {
           setState(() {
@@ -1136,6 +1140,7 @@ class _HC20HomePageState extends State<HC20HomePage> with WidgetsBindingObserver
     // Auto-stop scanning after 30 seconds
     Future.delayed(const Duration(seconds: 30), () {
       if (_isScanning) {
+        _scanSubscription?.cancel();
         setState(() {
           _isScanning = false;
           _statusMessage = 'Scan completed. Found ${_discoveredDevices.length} device(s)';
@@ -2146,7 +2151,7 @@ List<Map<String, dynamic>> _convertSleepRowsToJson(List<dynamic> sleepRows) {
         yy: yy,
         mm: mm,
         dd: dd,
-        includeSummary: false,  // ✅ ADD THIS
+        includeSummary: true,  // ✅ ADD THIS
       );
       print('✅ Sleep: ${sleepRows.length} records');
       
@@ -3362,16 +3367,16 @@ List<Map<String, dynamic>> _convertSleepRowsToJson(List<dynamic> sleepRows) {
       final authService = Provider.of<AuthService>(context, listen: false);
       final user = authService.currentUser;
 
-      // final dateStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-      // final yy = now.year % 100;
-      // final mm = now.month;
-      // final dd = now.day;
+      final dateStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+      final yy = now.year % 100;
+      final mm = now.month;
+      final dd = now.day;
 
-      // AFTER (change to Jan 20, 2026 for testing):
-      final dateStr = '2026-01-20';  // Hardcoded for testing
-      final yy = 26;  // 2026 % 100 = 26
-      final mm = 1;   // January
-      final dd = 20;  // 20th
+      // // AFTER (change to Jan 20, 2026 for testing):
+      // final dateStr = '2026-01-20';  // Hardcoded for testing
+      // final yy = 26;  // 2026 % 100 = 26
+      // final mm = 1;   // January
+      // final dd = 20;  // 20th
 
       // Fetch all history data types
       print('📊 Fetching all history data...');
@@ -3383,7 +3388,7 @@ List<Map<String, dynamic>> _convertSleepRowsToJson(List<dynamic> sleepRows) {
       final stepsRows = await _client!.getAllDayStepsRows(_connectedDevice!, yy: yy, mm: mm, dd: dd);
       final summaryRows = await _client!.getAllDaySummaryRows(_connectedDevice!, yy: yy, mm: mm, dd: dd);
       final caloriesRows = await _client!.getAllDayCaloriesRows(_connectedDevice!, yy: yy, mm: mm, dd: dd);
-      final sleepRows = await _client!.getAllDaySleepRows(_connectedDevice!, yy: yy, mm: mm, dd: dd, includeSummary: false);
+      final sleepRows = await _client!.getAllDaySleepRows(_connectedDevice!, yy: yy, mm: mm, dd: dd, includeSummary: true);
 
       final totalRecords = hrv2Rows.length + hrvRows.length + bpRows.length + spo2Rows.length + stepsRows.length + summaryRows.length + caloriesRows.length + sleepRows.length;
       
