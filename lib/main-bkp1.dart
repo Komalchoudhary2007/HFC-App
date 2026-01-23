@@ -23,7 +23,6 @@ import 'services/hc20_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'ui/widgets/app_top_bar.dart';  // Import AppTopBar (renamed from CustomAppBar)
 import 'ui/widgets/side_drawer.dart';  // Import SideDrawer (renamed from AppDrawer)
-import 'ui/widgets/bottom_navigation_bar.dart';  // Import MainScaffold for unified navigation
 import 'ui/screens/home_screen.dart';
 import 'ui/screens/vitals_screen.dart';
 import 'ui/screens/clinical_screen.dart';
@@ -159,9 +158,70 @@ class MyApp extends StatelessWidget {
           if (!authService.isAuthenticated) {
             return const LoginPage();
           }
-          // Show main app with bottom navigation bar using unified MainScaffold
-          return const MainScaffold();
+          // Show HC20 home page with bottom nav bar if authenticated
+          return const MainAppWithNavBar();
         },
+      ),
+    );
+  }
+}
+
+// Main app wrapper with bottom navigation bar
+class MainAppWithNavBar extends StatefulWidget {
+  const MainAppWithNavBar({super.key});
+
+  @override
+  State<MainAppWithNavBar> createState() => _MainAppWithNavBarState();
+}
+
+class _MainAppWithNavBarState extends State<MainAppWithNavBar> {
+  int _currentIndex = 3; // Start with Device page (HC20HomePage) as default
+
+  // List of screens for bottom navigation (same as bottom_navigation_bar.dart)
+  final List<Widget> _screens = [
+    const HomeScreen(),
+    const ClinicalScreen(),
+    const VitalsScreen(),
+    const HC20HomePage(title: 'HFC App - HC20 Wearable'), // Device/Connectivity screen
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: IndexedStack(
+        index: _currentIndex,
+        children: _screens,
+      ),
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _currentIndex,
+        onTap: (index) {
+          setState(() {
+            _currentIndex = index;
+          });
+        },
+        type: BottomNavigationBarType.fixed,
+        selectedItemColor: AppColors.primaryPurple,
+        unselectedItemColor: AppColors.textSecondary,
+        selectedFontSize: 12,
+        unselectedFontSize: 12,
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.home),
+            label: 'Home',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.medical_services),
+            label: 'Clinical',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.favorite),
+            label: 'Vitals',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.bluetooth_connected),
+            label: 'Device',
+          ),
+        ],
       ),
     );
   }

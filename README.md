@@ -92,7 +92,7 @@ export PATH="/Users/developer/Library/Android/sdk/platform-tools:$PATH"
 #### Step 3: Pair the phone (first time or after reboot)
 ```bash
 # Replace IP:PORT and PAIRING_CODE with values from Step 2
-adb pair 192.168.1.8:34735
+adb pair 192.168.1.14:32997
 # Enter pairing code when prompted: 892169
 ```
 
@@ -131,9 +131,9 @@ When the terminal disconnects (you closed terminal, pressed 'q', or Mac went to 
 **Option 1: Restart app with logs (RECOMMENDED)**
 ```bash
 export PATH="/Users/developer/Library/Android/sdk/platform-tools:$PATH"
-flutter run -d 192.168.1.12:45383
+flutter run -d 192.168.1.15:39239
 ```
-This will restart the app in debug mode and show logs immediately.
+⚠️ **Note**: This builds a NEW debug APK with your latest code changes, installs it, and shows logs.
 
 **Option 2: Attach to running app (only works if app was started with `flutter run`)**
 ```bash
@@ -147,12 +147,53 @@ flutter attach -d 192.168.1.12:45383
 - Background services work even without logs showing
 - Use Option 1 above when you need to see logs again
 
+### 🛑 How to Stop Logs / Close App
+
+**To stop seeing logs but keep app running:**
+```bash
+q  # Press 'q' in terminal and hit Enter
+# App continues running on phone, but logs stop showing
+```
+
+**To completely stop the app:**
+```bash
+# Option 1: Force stop (app stays installed)
+adb -s 192.168.1.15:39239 shell am force-stop com.example.hfc_app
+
+# Option 2: Uninstall completely
+adb -s 192.168.1.15:39239 uninstall com.example.hfc_app
+
+# Option 3: Close manually on phone
+# (Swipe app away from recent apps screen)
+```
+
+### 📊 Debug Logs & Storage
+
+**Where logs are stored:**
+- System logs (logcat): RAM only (circular buffer ~256KB-16MB)
+- App cache: `/data/data/com.example.hfc_app/cache/`
+- **Auto-cleanup**: Logs rotate automatically when buffer fills
+
+**Storage impact:**
+- ✅ Minimal (few MB in RAM during testing)
+- ✅ Auto-deleted when app closes or phone reboots
+- ✅ No long-term storage impact
+
+**Manual cleanup (if needed):**
+```bash
+# Clear system logs
+adb -s 192.168.1.15:39239 logcat -c
+
+# Clear app cache
+adb -s 192.168.1.15:39239 shell pm clear com.example.hfc_app
+```
+
 ### Quick Reconnect (after phone stays on same Wi-Fi)
 If phone was already paired and still on same network:
 ```bash
 export PATH="/Users/developer/Library/Android/sdk/platform-tools:$PATH"
 adb connect 192.168.1.8:45779
-flutter run -d 192.168.1.8:45779
+flutter run -d 192.168.1.15:42509
 ```
 
 ### Troubleshooting
@@ -175,3 +216,11 @@ adb connect 192.168.1.8:5555
 # 4. Run app
 flutter run -d 192.168.1.8:5555
 ```
+
+-----------------------
+
+  int _currentIndex = 3; // Start with Device page (HC20HomePage) as default
+
+create only UI desing and make only change in above suggested file and don't change anything in any other files code
+
+Note: as required only change in the code. dont change further in code, although if any thing importent you may recommend me by expain 
