@@ -15,7 +15,7 @@ class HomeScreen extends StatelessWidget {
           children: [
             // Greeting Section
             Padding(
-              padding: const EdgeInsets.fromLTRB(35, 20, 35, 10),
+              padding: const EdgeInsets.fromLTRB(16, 20, 16, 10),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -43,232 +43,64 @@ class HomeScreen extends StatelessWidget {
               ),
             ),
 
-            // Stress Level Card
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 35),
-              child: Container(
-                padding: const EdgeInsets.all(24),
-                decoration: BoxDecoration(
-                  color: Color(0xFFF8F1F9),
-                  borderRadius: BorderRadius.circular(24),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.05),
-                      blurRadius: 10,
-                      offset: Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: Stack(
-                  children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Hello, Komal',
-                          style: TextStyle(
-                            fontSize: 32,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.black,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        RichText(
-                          text: TextSpan(
-                            style: TextStyle(fontSize: 24, color: Colors.black),
-                            children: [
-                              TextSpan(
-                                text: 'Your Stress Level ',
-                                style: TextStyle(fontWeight: FontWeight.w500),
-                              ),
-                              TextSpan(
-                                text: 'is Cool!',
-                                style: TextStyle(
-                                  color: Color(0xFF1DB50F),
-                                  fontSize: 26,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                          decoration: BoxDecoration(
-                            color: Color(0xFFD3EDD1),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: RichText(
-                            text: TextSpan(
-                              style: TextStyle(fontSize: 24),
-                              children: [
-                                TextSpan(
-                                  text: '51',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                                TextSpan(
-                                  text: '/100',
-                                  style: TextStyle(
-                                    color: Color(0xFF1DB50F),
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          'Your stress level is higher than usual',
-                          style: TextStyle(fontSize: 14),
-                        ),
-                        const SizedBox(height: 16),
-                        ElevatedButton.icon(
-                          onPressed: () {},
-                          icon: Icon(Icons.psychology, size: 20),
-                          label: Text('I\'m Feeling Stress', style: TextStyle(fontSize: 18)),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Color(0xFFFF5F5A),
-                            foregroundColor: Colors.white,
-                            padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    Positioned(
-                      right: 0,
-                      top: 0,
-                      child: Icon(
-                        Icons.sentiment_satisfied_alt,
-                        size: 120,
-                        color: Color(0xFF1DB50F).withOpacity(0.2),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+            // Stress Level Card - Responsive Design
+            _buildStressLevelCard(context),
 
             const SizedBox(height: 24),
 
-            // Health Metrics Grid
+            // Health Summary Section - Responsive
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 35),
-              child: GridView.count(
-                shrinkWrap: true,
-                physics: NeverScrollableScrollPhysics(),
-                crossAxisCount: 2,
-                crossAxisSpacing: 16,
-                mainAxisSpacing: 16,
-                childAspectRatio: 1.2,
+              padding: const EdgeInsets.symmetric(horizontal: 18),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  _buildMetricCard(
-                    'Fatigue',
-                    '62/100',
-                    'Normal',
-                    Icons.battery_charging_full,
-                    Color(0xFFD0EFD3),
-                    Color(0xFF3D7244),
+                  Text(
+                    'Health Summary',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.black,
+                      fontFamily: 'poppins',
+                    ),
                   ),
-                  _buildMetricCard(
-                    'Blood Pressure',
-                    '122/80',
-                    'Normal',
-                    Icons.favorite,
-                    Color(0xFFD0EFD3),
-                    Color(0xFF3D7244),
-                  ),
-                  _buildMetricCard(
-                    'Stress Resilience',
-                    '72/100',
-                    'Good',
-                    Icons.self_improvement,
-                    Color(0xFFD0EFD3),
-                    Color(0xFF3D7244),
-                  ),
-                  _buildMetricCard(
-                    'Regulation Ability',
-                    '70/100',
-                    'Normal',
-                    Icons.settings_suggest,
-                    Color(0xFFD0EFD3),
-                    Color(0xFF3D7244),
+                  Row(
+                    children: [
+                      Text(
+                        'View all',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.black87,
+                          fontFamily: 'poppins',
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(
+                        Icons.arrow_forward,
+                        size: 16,
+                        color: Colors.black87,
+                      ),
+                    ],
                   ),
                 ],
               ),
             ),
 
+            const SizedBox(height: 14),
+
+            // Health Metrics Grid - Responsive
+            _buildHealthMetricsGrid(context),
+
             const SizedBox(height: 24),
 
-            // Health Summary Section
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 35),
-              child: Container(
-                padding: const EdgeInsets.all(24),
-                decoration: BoxDecoration(
-                  color: Color(0xFFF8F1F9),
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.05),
-                      blurRadius: 10,
-                      offset: Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          'Health Summary',
-                          style: TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        TextButton(
-                          onPressed: () {},
-                          child: Text('View all', style: TextStyle(fontSize: 14)),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    GridView.count(
-                      shrinkWrap: true,
-                      physics: NeverScrollableScrollPhysics(),
-                      crossAxisCount: 2,
-                      crossAxisSpacing: 12,
-                      mainAxisSpacing: 12,
-                      childAspectRatio: 2.2,
-                      children: [
-                        _buildSummaryCard('96%', 'SpO₂', Icons.air),
-                        _buildSummaryCard('7 h', 'Sleep', Icons.bedtime),
-                        _buildSummaryCard('1421', 'kcal', Icons.local_fire_department),
-                        _buildSummaryCard('8432', 'Steps', Icons.directions_walk),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
+            _buildHealthSummarySection(context),
 
             const SizedBox(height: 24),
 
             // Special Child Services Section
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 35),
+              padding: const EdgeInsets.symmetric(horizontal: 10),
               child: Container(
-                padding: const EdgeInsets.all(24),
+                padding: const EdgeInsets.all(18),
                 decoration: BoxDecoration(
                   color: Color(0xFFF8F1F9),
                   borderRadius: BorderRadius.circular(16),
@@ -286,8 +118,8 @@ class HomeScreen extends StatelessWidget {
                     Text(
                       'Special Child Services',
                       style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w500,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
                     const SizedBox(height: 16),
@@ -295,17 +127,17 @@ class HomeScreen extends StatelessWidget {
                       shrinkWrap: true,
                       physics: NeverScrollableScrollPhysics(),
                       crossAxisCount: 2,
-                      crossAxisSpacing: 12,
-                      mainAxisSpacing: 12,
+                      crossAxisSpacing: 8,
+                      mainAxisSpacing: 8,
                       childAspectRatio: 2.2,
                       children: [
-                        _buildServiceCard('Occupational Therapy', Icons.work),
-                        _buildServiceCard('Speech Therapy', Icons.record_voice_over),
-                        _buildServiceCard('ABA Therapy', Icons.psychology),
-                        _buildServiceCard('Special Education', Icons.school),
+                        _buildServiceCard('Occupational Therapy', 'assets/images/home/occupational-therapy.png'),
+                        _buildServiceCard('Speech Therapy', 'assets/images/home/speech-therapy.png'),
+                        _buildServiceCard('ABA\nTherapy', 'assets/images/home/aba-therapy.png'),
+                        _buildServiceCard('Special Education', 'assets/images/home/special-education.png'),
                       ],
                     ),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 20),
                     Center(
                       child: Column(
                         children: [
@@ -314,17 +146,17 @@ class HomeScreen extends StatelessWidget {
                             style: ElevatedButton.styleFrom(
                               backgroundColor: Color(0xFF532A7B),
                               foregroundColor: Colors.white,
-                              padding: EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                              padding: EdgeInsets.symmetric(horizontal: 26, vertical: 12),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(16),
                               ),
                             ),
                             child: Text(
                               'Book Free Consultation',
-                              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+                              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                             ),
                           ),
-                          const SizedBox(height: 8),
+                          const SizedBox(height: 6),
                           Text(
                             'Talk to a HireForCare expert about your concerns',
                             style: TextStyle(fontSize: 11),
@@ -338,23 +170,16 @@ class HomeScreen extends StatelessWidget {
               ),
             ),
 
-            const SizedBox(height: 24),
+            const SizedBox(height: 22),
 
             // How Therapy Works Section
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 35),
+              padding: const EdgeInsets.symmetric(horizontal: 10),
               child: Container(
-                padding: const EdgeInsets.all(24),
+                padding: const EdgeInsets.all(18),
                 decoration: BoxDecoration(
                   color: Color(0xFFF8F1F9),
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.05),
-                      blurRadius: 10,
-                      offset: Offset(0, 2),
-                    ),
-                  ],
+                  borderRadius: BorderRadius.circular(14),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -362,26 +187,28 @@ class HomeScreen extends StatelessWidget {
                     Text(
                       'How Therapy Works',
                       style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w500,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.black,
+                        fontFamily: 'poppins',
                       ),
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 20),
                     Row(
                       children: [
                         Expanded(
                           child: _buildTherapyCard(
                             'Online Therapy',
-                            'Session from home, guided by experts',
-                            Icons.videocam,
+                            'Home session by experts',
+                            'assets/images/home/online-therapy.png',
                           ),
                         ),
-                        const SizedBox(width: 12),
+                        const SizedBox(width: 20),
                         Expanded(
                           child: _buildTherapyCard(
-                            'Therapy Centre',
-                            'Hands-on support at our centre',
-                            Icons.location_on,
+                            'In-Centre Therapy',
+                            'Support at our centre',
+                            'assets/images/home/in-centre-therapy.png',
                           ),
                         ),
                       ],
@@ -402,7 +229,7 @@ class HomeScreen extends StatelessWidget {
     String title,
     String value,
     String status,
-    IconData icon,
+    String imagePath,
     Color statusBgColor,
     Color statusTextColor,
   ) {
@@ -462,10 +289,11 @@ class HomeScreen extends StatelessWidget {
           Positioned(
             right: 0,
             top: 0,
-            child: Icon(
-              icon,
-              size: 40,
-              color: Colors.grey.withOpacity(0.2),
+            child: Image.asset(
+              imagePath,
+              width: 40,
+              height: 40,
+              fit: BoxFit.contain,
             ),
           ),
         ],
@@ -473,7 +301,7 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildSummaryCard(String value, String label, IconData icon) {
+  Widget _buildSummaryCard(String value, String label, String imagePath) {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -489,7 +317,7 @@ class HomeScreen extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Icon(icon, size: 28, color: Color(0xFF532A7B)),
+          Image.asset(imagePath, width: 28, height: 28, fit: BoxFit.contain),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -521,12 +349,12 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildServiceCard(String title, IconData icon) {
+  Widget _buildServiceCard(String title, String imagePath) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.05),
@@ -537,7 +365,7 @@ class HomeScreen extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Icon(icon, size: 32, color: Color(0xFF532A7B)),
+          Image.asset(imagePath, width: 32, height: 32, fit: BoxFit.contain),
           const SizedBox(width: 12),
           Expanded(
             child: Text(
@@ -553,64 +381,85 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildTherapyCard(String title, String description, IconData icon) {
+  Widget _buildTherapyCard(String title, String description, String imagePath) {
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 5,
-            offset: Offset(0, 2),
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 12,
+            offset: Offset(0, 4),
           ),
         ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            height: 100,
-            decoration: BoxDecoration(
-              color: Color(0xFF8C56C0).withOpacity(0.2),
-              borderRadius: BorderRadius.only(
-                topLeft: Radius.circular(16),
-                topRight: Radius.circular(16),
-              ),
+          // Image with play button overlay
+          ClipRRect(
+            borderRadius: BorderRadius.only(
+              topLeft: Radius.circular(20),
+              topRight: Radius.circular(20),
             ),
-            child: Center(
-              child: Container(
-                padding: EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Color(0xFF8C56C0).withOpacity(0.6),
-                  shape: BoxShape.circle,
-                  border: Border.all(color: Colors.white, width: 2),
-                ),
-                child: Icon(
-                  Icons.play_arrow,
-                  color: Colors.white,
-                  size: 24,
-                ),
+            child: Container(
+              height: 80,
+              width: double.infinity,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Image.asset(
+                    imagePath,
+                    fit: BoxFit.cover,
+                  ),
+                  // Play button overlay
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: Color(0xFF8C56C0).withOpacity(0.5),
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: Colors.white,
+                          width: 1,
+                        ),
+                      ),
+                      child: Icon(
+                        Icons.play_arrow,
+                        color: Colors.white,
+                        size: 24,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
+          // Text content
           Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(10),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   title,
                   style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.black,
+                    fontFamily: 'poppins',
                   ),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   description,
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: 8,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.black87,
+                    fontFamily: 'poppins',
                   ),
                 ),
               ],
@@ -618,6 +467,537 @@ class HomeScreen extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+
+  // Responsive Stress Level Card matching Figma design
+  Widget _buildStressLevelCard(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    
+    // Responsive scale factor
+    double getScale() {
+      if (screenWidth >= 1200) return 1.3;
+      if (screenWidth >= 900) return 1.15;
+      if (screenWidth >= 600) return 1.0;
+      if (screenWidth >= 400) return 0.9;
+      return 0.8;
+    }
+    
+    final scale = getScale();
+
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: 16 * scale),
+      child: Container(
+        padding: EdgeInsets.all(24 * scale),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(24 * scale),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.08),
+              blurRadius: 16 * scale,
+              offset: Offset(0, 4 * scale),
+            ),
+          ],
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            // Left Side - Text Content
+            Expanded(
+              flex: 6,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Hello, Komal',
+                    style: TextStyle(
+                      fontSize: 28 * scale,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.black,
+                      fontFamily: 'poppins',
+                    ),
+                  ),
+                  SizedBox(height: 4 * scale),
+                  RichText(
+                    text: TextSpan(
+                      style: TextStyle(
+                        fontSize: 18 * scale,
+                        color: Colors.black,
+                        fontFamily: 'poppins',
+                      ),
+                      children: [
+                        TextSpan(
+                          text: 'Your Stress Level ',
+                          style: TextStyle(fontWeight: FontWeight.w500),
+                        ),
+                        TextSpan(
+                          text: 'is Cool!',
+                          style: TextStyle(
+                            color: Color(0xFF2DD36F),
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(height: 16 * scale),
+                  
+                  // Progress Bar
+                  Stack(
+                    children: [
+                      // Background bar
+                      Container(
+                        height: 44 * scale,
+                        decoration: BoxDecoration(
+                          color: Color(0xFFD4EDC5),
+                          borderRadius: BorderRadius.circular(8 * scale),
+                        ),
+                      ),
+                      // Foreground progress bar
+                      FractionallySizedBox(
+                        widthFactor: 0.51,
+                        child: Container(
+                          height: 44 * scale,
+                          decoration: BoxDecoration(
+                            color: Color(0xFF2DD36F),
+                            borderRadius: BorderRadius.circular(8 * scale),
+                          ),
+                          alignment: Alignment.center,
+                          child: Text(
+                            '51',
+                            style: TextStyle(
+                              fontSize: 22 * scale,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white,
+                              fontFamily: 'poppins',
+                            ),
+                          ),
+                        ),
+                      ),
+                      // Total value
+                      Positioned(
+                        right: 16 * scale,
+                        top: 0,
+                        bottom: 0,
+                        child: Center(
+                          child: Text(
+                            '100',
+                            style: TextStyle(
+                              fontSize: 22 * scale,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF2DD36F),
+                              fontFamily: 'poppins',
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  
+                  SizedBox(height: 12 * scale),
+                  
+                  // Text(
+                  //   'Your stress level is higher than usual',
+                  //   style: TextStyle(
+                  //     fontSize: 13 * scale,
+                  //     color: Colors.black87,
+                  //     fontFamily: 'poppins',
+                  //     fontWeight: FontWeight.w400,
+                  //   ),
+                  // ),
+                  
+                  // SizedBox(height: 16 * scale),
+                  
+                  // Feeling Stress Button
+                  ElevatedButton.icon(
+                    onPressed: () {},
+                    icon: Icon(
+                      Icons.notifications_active_rounded,
+                      size: 20 * scale,
+                    ),
+                    label: Text(
+                      'I\'m Feeling Stress',
+                      style: TextStyle(
+                        fontSize: 15 * scale,
+                        fontWeight: FontWeight.w600,
+                        fontFamily: 'poppins',
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Color(0xFFFF5F5A),
+                      foregroundColor: Colors.white,
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 20 * scale,
+                        vertical: 14 * scale,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12 * scale),
+                      ),
+                      elevation: 2,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            
+            SizedBox(width: 16 * scale),
+            
+            // Right Side - Illustration
+            Flexible(
+              flex: 4,
+              child: Container(
+                constraints: BoxConstraints(
+                  maxWidth: 180 * scale,
+                  maxHeight: 180 * scale,
+                ),
+                child: Image.asset(
+                  'assets/images/home/cool-mind.png',
+                  fit: BoxFit.contain,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Responsive Health Metrics Grid matching Figma design
+  Widget _buildHealthMetricsGrid(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    
+    double getScale() {
+      if (screenWidth >= 1200) return 1.3;
+      if (screenWidth >= 900) return 1.15;
+      if (screenWidth >= 600) return 1.0;
+      if (screenWidth >= 400) return 0.9;
+      return 0.8;
+    }
+    
+    final scale = getScale();
+
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: 14 * scale),
+      child: GridView.count(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        crossAxisCount: 2,
+        crossAxisSpacing: 8 * scale,
+        mainAxisSpacing: 8 * scale,
+        childAspectRatio: 1.9,
+        children: [
+          _buildMetricCardNew(
+            context,
+            'Fatigue',
+            '62/100',
+            'Normal',
+            'assets/images/home/fatigue.png',
+          ),
+          _buildMetricCardNew(
+            context,
+            'Blood Pressure',
+            '122/80',
+            'Normal',
+            'assets/images/home/bp.png',
+          ),
+          _buildMetricCardNew(
+            context,
+            'Stress Resilience',
+            '72/100',
+            'Good',
+            'assets/images/home/stress-resilience.png',
+          ),
+          _buildMetricCardNew(
+            context,
+            'Regulation Ability',
+            '70/100',
+            'Normal',
+            'assets/images/home/regulation-ability.png',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMetricCardNew(
+    BuildContext context,
+    String title,
+    String value,
+    String status,
+    String imagePath,
+  ) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    
+    double getScale() {
+      if (screenWidth >= 1200) return 1.3;
+      if (screenWidth >= 900) return 1.15;
+      if (screenWidth >= 600) return 1.0;
+      if (screenWidth >= 400) return 0.9;
+      return 0.8;
+    }
+    
+    final scale = getScale();
+
+    return Container(
+      padding: EdgeInsets.all(10 * scale),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20 * scale),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 12 * scale,
+            offset: Offset(0, 4 * scale),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Title at top
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 16 * scale,
+              fontWeight: FontWeight.w600,
+              color: Colors.black,
+              fontFamily: 'poppins',
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          SizedBox(height: 6 * scale),
+          
+          // Content row with icon on right side
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Left side: Value and Badge
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      value,
+                      style: TextStyle(
+                        fontSize: 20 * scale,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.black,
+                        fontFamily: 'poppins',
+                      ),
+                    ),
+                    SizedBox(height: 4 * scale),
+                    Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 12 * scale,
+                        vertical: 3 * scale,
+                      ),
+                      decoration: BoxDecoration(
+                        color: status == 'Good'
+                            ? Color(0xFFD4EDC5)
+                            : Color(0xFFD4EDC5),
+                        borderRadius: BorderRadius.circular(20 * scale),
+                      ),
+                      child: Text(
+                        status,
+                        style: TextStyle(
+                          fontSize: 12 * scale,
+                          fontWeight: FontWeight.w600,
+                          color: status == 'Good'
+                              ? Color(0xFF2E7D32)
+                              : Color(0xFF2E7D32),
+                          fontFamily: 'poppins',
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(width: 4 * scale),
+              // Right side: Icon
+              Container(
+                constraints: BoxConstraints(
+                  maxWidth: 70 * scale,
+                  maxHeight: 60 * scale,
+                ),
+                child: Image.asset(
+                  imagePath,
+                  fit: BoxFit.contain,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Responsive Health Summary Section matching Figma design
+  Widget _buildHealthSummarySection(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    
+    double getScale() {
+      if (screenWidth >= 1200) return 1.3;
+      if (screenWidth >= 900) return 1.15;
+      if (screenWidth >= 600) return 1.0;
+      if (screenWidth >= 400) return 0.9;
+      return 0.8;
+    }
+    
+    final scale = getScale();
+
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: 10 * scale),
+      child: Row(
+        children: [
+              Expanded(
+                child: Container(
+                  padding: EdgeInsets.all(4 * scale),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20 * scale),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.08),
+                        blurRadius: 12 * scale,
+                        offset: Offset(0, 4 * scale),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: _buildSummaryItemNew(
+                          context,
+                          '96%',
+                          'SpO₂',
+                          'assets/images/home/spo2.png',
+                        ),
+                      ),
+                      Container(
+                        width: 1,
+                        height: 40 * scale,
+                        color: Colors.grey.shade300,
+                        margin: EdgeInsets.symmetric(horizontal: 6 * scale),
+                      ),
+                      Expanded(
+                        child: _buildSummaryItemNew(
+                          context,
+                          '7 h',
+                          'Sleep',
+                          'assets/images/home/sleep.png',
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              SizedBox(width: 12 * scale),
+              Expanded(
+                child: Container(
+                  padding: EdgeInsets.all(4 * scale),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20 * scale),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.08),
+                        blurRadius: 12 * scale,
+                        offset: Offset(0, 4 * scale),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: _buildSummaryItemNew(
+                          context,
+                          '1421',
+                          'kcal',
+                          'assets/images/home/kcal.png',
+                        ),
+                      ),
+                      Container(
+                        width: 1,
+                        height: 40 * scale,
+                        color: Colors.grey.shade300,
+                        margin: EdgeInsets.symmetric(horizontal: 6 * scale),
+                      ),
+                      Expanded(
+                        child: _buildSummaryItemNew(
+                          context,
+                          '7 h',
+                          'Steps',
+                          'assets/images/home/steps.png',
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+    );
+  }
+
+  Widget _buildSummaryItemNew(
+    BuildContext context,
+    String value,
+    String label,
+    String imagePath,
+  ) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    
+    double getScale() {
+      if (screenWidth >= 1200) return 1.3;
+      if (screenWidth >= 900) return 1.15;
+      if (screenWidth >= 600) return 1.0;
+      if (screenWidth >= 400) return 0.9;
+      return 0.8;
+    }
+    
+    final scale = getScale();
+
+    return Row(
+      children: [
+        Container(
+          width: 44 * scale,
+          height: 44 * scale,
+          padding: EdgeInsets.all(4 * scale),
+          child: Image.asset(
+            imagePath,
+            fit: BoxFit.contain,
+          ),
+        ),
+        SizedBox(width: 8 * scale),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              value,
+              style: TextStyle(
+                fontSize: 16 * scale,
+                fontWeight: FontWeight.w700,
+                color: Colors.black,
+                fontFamily: 'poppins',
+              ),
+            ),
+            SizedBox(height: 2 * scale),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12 * scale,
+                fontWeight: FontWeight.w500,
+                color: Colors.black87,
+                fontFamily: 'poppins',
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }
