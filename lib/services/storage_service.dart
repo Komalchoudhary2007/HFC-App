@@ -29,7 +29,7 @@ class StorageService {
       await _secureStorage.write(key: _keyAuthToken, value: token);
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('backup_$_keyAuthToken', token);
-      
+
       // Verify save
       final verify = await _secureStorage.read(key: _keyAuthToken);
       if (verify == null) {
@@ -54,15 +54,16 @@ class StorageService {
         print('🔑 Token retrieved from secure storage: ${token.length} chars');
         return token;
       }
-      
+
       // Fallback to SharedPreferences
       final prefs = await SharedPreferences.getInstance();
       final backupToken = prefs.getString('backup_$_keyAuthToken');
       if (backupToken != null) {
-        print('🔑 Token retrieved from SharedPreferences backup: ${backupToken.length} chars');
+        print(
+            '🔑 Token retrieved from SharedPreferences backup: ${backupToken.length} chars');
         return backupToken;
       }
-      
+
       print('❌ No token found in either storage');
       return null;
     } catch (e) {
@@ -71,7 +72,8 @@ class StorageService {
       final prefs = await SharedPreferences.getInstance();
       final backupToken = prefs.getString('backup_$_keyAuthToken');
       if (backupToken != null) {
-        print('🔑 Token retrieved from SharedPreferences backup: ${backupToken.length} chars');
+        print(
+            '🔑 Token retrieved from SharedPreferences backup: ${backupToken.length} chars');
       } else {
         print('❌ No token in backup either');
       }
@@ -104,7 +106,7 @@ class StorageService {
       if (userJson != null) {
         return User.fromJson(jsonDecode(userJson));
       }
-      
+
       // Fallback to SharedPreferences
       final prefs = await SharedPreferences.getInstance();
       final backupJson = prefs.getString('backup_$_keyUser');
@@ -133,12 +135,12 @@ class StorageService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_keyDeviceName, deviceName);
   }
+
   // Get device name
   Future<String?> getDeviceName() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString(_keyDeviceName);
   }
-
 
   // Save HC20 device ID for auto-reconnect
   Future<void> saveDeviceId(String deviceId) async {
@@ -164,7 +166,7 @@ class StorageService {
       if (deviceId != null) {
         return deviceId;
       }
-      
+
       // Fallback to SharedPreferences
       final prefs = await SharedPreferences.getInstance();
       return prefs.getString('backup_$_keyDeviceId');
@@ -186,13 +188,35 @@ class StorageService {
   Future<void> clearAuth() async {
     await _secureStorage.delete(key: _keyAuthToken);
     await _secureStorage.delete(key: _keyUser);
-    
+
     // Also clear backups
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('backup_$_keyAuthToken');
     await prefs.remove('backup_$_keyUser');
-    
+
     print('✅ Authentication data cleared');
+  }
+
+  // Clear device data only (for forgetting device)
+  Future<void> clearDeviceData() async {
+    try {
+      await _secureStorage.delete(key: _keyDeviceId);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('backup_$_keyDeviceId');
+      await prefs.remove(_keyDeviceName);
+      // Also clear SharedPreferences device state
+      await prefs.remove('device_connected');
+      await prefs.remove('saved_device_id');
+      await prefs.remove('last_connected_device_id');
+      await prefs.remove('last_connected_device_name');
+      // Clear sync timestamps (reset to initial default)
+      await prefs.remove('last_realtime_sync');
+      await prefs.remove('last_history_sync');
+      await prefs.remove('last_history_sync_date');
+      print('✅ Device data cleared (device forgotten, sync timestamps reset)');
+    } catch (e) {
+      print('⚠️ Error clearing device data: $e');
+    }
   }
 
   // Clear all data including device info

@@ -19,6 +19,9 @@ import java.io.IOException
 import java.util.*
 
 class ForegroundService : Service() {
+    // Add debug flag at top of class
+    private val DEBUG_DISABLE_NOTIFICATION_UPDATES = true  // ✅ Set to false to re-enable all notifications
+    
     private var wakeLock: PowerManager.WakeLock? = null
     private var bluetoothManager: BluetoothManager? = null
     private var bluetoothAdapter: BluetoothAdapter? = null
@@ -66,6 +69,13 @@ class ForegroundService : Service() {
         private const val WEBHOOK_URL = "https://api.hireforcare.com/webhook/hc20-data"
         private const val WEBHOOK_INTERVAL_MS = 120000L // 2 minutes
         private const val RECONNECT_DELAY_MS = 5000L // 5 seconds
+        
+        // 🔧 TOGGLE THIS FLAG TO ENABLE/DISABLE NATIVE WEBHOOKS
+        private const val ENABLE_NATIVE_WEBHOOKS = false  // ← CHANGE THIS TO true WHEN READY
+        
+        // Explanation for future developers:
+        // - false: Native webhook disabled (current state - waiting for Flutter data pipeline)
+        // - true: Native webhook enabled (use when Flutter→Native data flow is complete)
     }
     
     override fun onCreate() {
@@ -73,9 +83,10 @@ class ForegroundService : Service() {
         createNotificationChannel()
         
         // Start foreground immediately with persistent notification
-        val notification = createNotification("Initializing...")
+        // val notification = createNotification("Initializing...") use when show all notifications
+        val notification = createNotification("Stay connected. Stay stress-free 🌿") //use when show only initial notification
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, 
+            startForeground(NOTIFICATION_ID, notification,
                 android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         } else {
             startForeground(NOTIFICATION_ID, notification)
@@ -469,6 +480,13 @@ class ForegroundService : Service() {
     
     // Webhook Management
     private fun startPeriodicWebhook() {
+        // Check if webhooks are enabled before starting
+        if (!ENABLE_NATIVE_WEBHOOKS) {
+            println("⏸️ [ForegroundService] Native webhooks DISABLED - waiting for Flutter data pipeline")
+            println("⏸️ [ForegroundService] Native webhooks disabled via ENABLE_NATIVE_WEBHOOKS flag")
+            return  // Exit early, don't start webhook sender
+        }
+        
         webhookRunnable = object : Runnable {
             override fun run() {
                 sendWebhook()
@@ -476,6 +494,7 @@ class ForegroundService : Service() {
             }
         }
         handler.post(webhookRunnable!!)
+        
         println("✅ [ForegroundService] Periodic webhook sender started (every ${WEBHOOK_INTERVAL_MS/1000}s)")
     }
     
@@ -589,7 +608,7 @@ class ForegroundService : Service() {
         )
         
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("HFC Health Monitor - Active")
+            .setContentTitle("HFC Health Monitoring 💙")
             .setContentText(status)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentIntent(pendingIntent)
@@ -603,6 +622,12 @@ class ForegroundService : Service() {
     }
     
     private fun updateNotification(status: String) {
+        // ✅ ADDED: Skip updates in debug mode (below if condition only show Initial notification)
+        if (DEBUG_DISABLE_NOTIFICATION_UPDATES) {
+            println("🔕 [DEBUG] Notification update skipped: $status")
+            return
+        }
+        
         val notification = createNotification(status)
         val manager = getSystemService(NotificationManager::class.java)
         manager.notify(NOTIFICATION_ID, notification)

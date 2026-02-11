@@ -135,7 +135,7 @@ object AppLauncher {
             // This is the KEY - full-screen intents can launch activities from background!
             val notification = NotificationCompat.Builder(context, NOTIFICATION_CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
-                .setContentTitle("🔄 HFC App Restarting")
+                .setContentTitle("🔄 1HFC App Restarting")
                 .setContentText("Reconnecting to HC20 device...")
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setCategory(NotificationCompat.CATEGORY_CALL) // Treat like a call for high priority
@@ -251,7 +251,12 @@ object AppLauncher {
      */
     fun scheduleKeepaliveRestart(context: Context, delaySeconds: Int, scheduledBy: String = "keepalive_service") {
         try {
-            Log.d(TAG, "🔔 Scheduling restart via broadcast in $delaySeconds seconds (by: $scheduledBy)")
+            Log.d(TAG, "⏰ ========== SCHEDULE KEEPALIVE RESTART ==========")
+            Log.d(TAG, "⏰ scheduledBy: $scheduledBy")
+            Log.d(TAG, "⏰ delaySeconds: $delaySeconds (${delaySeconds / 60} min)")
+            Log.d(TAG, "⏰ Current time: ${java.text.SimpleDateFormat("HH:mm:ss").format(java.util.Date())}")
+            val fireTime = java.util.Date(System.currentTimeMillis() + (delaySeconds * 1000L))
+            Log.d(TAG, "⏰ Expected fire time: ${java.text.SimpleDateFormat("HH:mm:ss").format(fireTime)}")
             
             val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
             
@@ -266,6 +271,7 @@ object AppLauncher {
                 "workmanager" -> WORKMANAGER_REQUEST_CODE
                 else -> KEEPALIVE_REQUEST_CODE
             }
+            Log.d(TAG, "⏰ Using requestCode: $requestCode")
 
             // Create PendingIntent for broadcast
             val pendingIntent = PendingIntent.getBroadcast(
@@ -285,10 +291,8 @@ object AppLauncher {
                 pendingIntent
             )
             
-            Log.d(TAG, "✅ Keepalive restart scheduled via broadcast")
-            Log.d(TAG, "   Delay: $delaySeconds seconds")
-            Log.d(TAG, "   Will work from alarm isolate")
-            
+            Log.d(TAG, "✅ Alarm scheduled successfully!")
+            Log.d(TAG, "⏰ =================================================")
         } catch (e: Exception) {
             Log.e(TAG, "❌ Failed to schedule keepalive restart: ${e.message}")
         }

@@ -1,14 +1,12 @@
 import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
-import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
 
 /// Service that uses AlarmManager to ensure app stays alive or auto-restarts
 /// This is the MOST RELIABLE method for keeping app running in background
 /// Uses Native Android AlarmManager - survives app kills and device reboots
+@pragma('vm:entry-point')
 class AppKeepaliveService {
-  static const String _alarmName = 'hfc_keepalive_alarm';
-  static const int _alarmId = 777;
   static const MethodChannel _channel = MethodChannel('com.example.hfc_app/app_launcher');
   
   /// Initialize the alarm manager
@@ -21,6 +19,35 @@ class AppKeepaliveService {
     }
   }
   
+  /// Save sync intervals to SharedPreferences so native code can read them
+  /// Call this when app starts or when intervals change
+  /// @param realtimeInterval - realtime sync interval in minutes
+  /// @param reconnectInterval - reconnect attempt interval in minutes
+  @pragma('vm:entry-point')
+  static Future<void> saveIntervalsToNative({
+    required int realtimeInterval,
+    required int reconnectInterval,
+  }) async {
+    try {
+      print('🔧 [AppKeepalive] ========== SAVING INTERVALS TO NATIVE ==========');
+      print('🔧 [AppKeepalive] realtimeInterval: $realtimeInterval min');
+      print('🔧 [AppKeepalive] reconnectInterval: $reconnectInterval min');
+      
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt('realtime_interval_minutes', realtimeInterval);
+      await prefs.setInt('reconnect_interval_minutes', reconnectInterval);
+      
+      // Verify saved values
+      final savedRealtime = prefs.getInt('realtime_interval_minutes');
+      final savedReconnect = prefs.getInt('reconnect_interval_minutes');
+      print('🔧 [AppKeepalive] Verified saved values - realtime: $savedRealtime, reconnect: $savedReconnect');
+      print('✅ [AppKeepalive] Intervals saved successfully!');
+      print('🔧 [AppKeepalive] ================================================');
+    } catch (e) {
+      print('❌ [AppKeepalive] Failed to save intervals: $e');
+    }
+  }
+  
   /// Start periodic app keepalive (every 5 minutes)
   /// This will:
   /// 1. Check if app is running
@@ -28,22 +55,19 @@ class AppKeepaliveService {
   /// 3. If running, ensure HC20 connection is active
   static Future<void> startPeriodicKeepalive() async {
     try {
-      // First, schedule a native broadcast alarm as backup
-      // This alarm will trigger AppRestartReceiver every 15 minutes
+      // Schedule native broadcast alarm (the ONLY alarm we need)
+      // This alarm will trigger AppRestartReceiver every 5 minutes
       // We do this WHILE the app is running so MethodChannel works
       await _scheduleNativeRestartAlarm();
       
-      // Then start periodic Dart callback
-      await AndroidAlarmManager.periodic(
-        const Duration(minutes: 5),
-        _alarmId,
-        _keepaliveCallback,
-        wakeup: true,  // Wake device if sleeping
-        exact: true,   // Use exact timing
-        rescheduleOnReboot: true,  // Restart after device reboot
-      );
+      // ❌ REMOVED: AndroidAlarmManager.periodic() 
+      // Reason: It creates a 3rd Flutter engine (isolate) which:
+      // - Cannot use MethodChannel to launch app (isolate limitation)
+      // - Interferes with BLE connection (multiple engines conflict)
+      // - Wastes battery (useless background engine)
+      // Native broadcast alarm is sufficient for app relaunch
       
-      print('✅ [AppKeepalive] Periodic keepalive started (5-min interval)');
+      print('✅ [AppKeepalive] Periodic keepalive started (native alarm only)');
       print('   Native restart alarm: 5-min interval');
       print('   Will auto-launch app if closed');
       print('   Will wake device if sleeping');
@@ -64,130 +88,71 @@ class AppKeepaliveService {
     try {
       // Call native method to schedule alarm with broadcast intent
       // Each alarm reschedules itself, creating a repeating pattern
+      // NOTE: This is just initial fallback - dynamic scheduling will override this
+      //       after device connects (after_realtime_sync) or reconnect fails (after_reconnect_fail)
       await _channel.invokeMethod('scheduleKeepaliveRestart', {
-        'delaySeconds': 300, // 5 minutes
+        'delaySeconds': 600, // 10 minutes (initial fallback, will be overwritten by dynamic scheduling)
         'scheduledBy': 'keepalive_service',
       });
-      print('   ✅ Native restart alarm scheduled (5-min interval, self-perpetuating)');
+      print('   ✅ Native restart alarm scheduled (5-min initial, will be overwritten by dynamic scheduling)');
     } catch (e) {
       print('   ⚠️ Failed to schedule native restart alarm: $e');
       // Not critical - WorkManager will handle restarts
     }
   }
   
+  /// Schedule next alarm dynamically based on connection state
+  /// Called after realtime sync (connected) or reconnect failure (disconnected)
+  /// 
+  /// @param delayMinutes - delay in minutes before next alarm fires
+  /// @param reason - why this alarm was scheduled (for logging)
+  @pragma('vm:entry-point')
+  static Future<void> scheduleNextAlarm({
+    required int delayMinutes,
+    required String reason,
+  }) async {
+    try {
+      final delaySeconds = delayMinutes * 60;
+      print('⏰ [AppKeepalive] ========== SCHEDULING NEXT ALARM ==========');
+      print('⏰ [AppKeepalive] Reason: $reason');
+      print('⏰ [AppKeepalive] Delay: $delayMinutes min ($delaySeconds sec)');
+      print('⏰ [AppKeepalive] Expected fire time: ${DateTime.now().add(Duration(minutes: delayMinutes))}');
+      
+      // Update last_active_timestamp so WorkManager knows app is alive
+      await markAppActive();
+      
+      await _channel.invokeMethod('scheduleKeepaliveRestart', {
+        'delaySeconds': delaySeconds,
+        'scheduledBy': reason,
+      });
+      
+      print('✅ [AppKeepalive] Alarm scheduled successfully!');
+      print('⏰ [AppKeepalive] ==========================================');
+    } catch (e) {
+      print('⚠️ [AppKeepalive] Failed to schedule next alarm: $e');
+    }
+  }
+  
   /// Stop periodic keepalive
   static Future<void> stopPeriodicKeepalive() async {
     try {
-      await AndroidAlarmManager.cancel(_alarmId);
-      print('⏹️ [AppKeepalive] Keepalive stopped');
+      // Note: Since we removed AndroidAlarmManager.periodic(), 
+      // this is now a no-op. Native alarms are cancelled via native code.
+      print('⏹️ [AppKeepalive] Keepalive stop requested (native alarms handled by native code)');
     } catch (e) {
       print('❌ [AppKeepalive] Failed to stop: $e');
     }
   }
   
-  /// Callback that runs every 10 minutes
-  /// This runs in isolate - CANNOT use MethodChannel!
-  /// Instead, we schedule an immediate alarm that triggers AppRestartReceiver
-  @pragma('vm:entry-point')
-  static Future<void> _keepaliveCallback() async {
-    print('🔔 [AppKeepalive] Alarm triggered at ${DateTime.now()}');
-    
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final lastActive = prefs.getInt('last_active_timestamp') ?? 0;
-      final now = DateTime.now().millisecondsSinceEpoch;
-      final minutesSinceActive = (now - lastActive) ~/ 60000;
-      
-      print('   Minutes since last active: $minutesSinceActive');
-      
-      // If app hasn't been active for 3+ minutes, assume it's closed
-      if (minutesSinceActive >= 3) {
-        print('   ⚠️ App appears CLOSED');
-        print('   ℹ️ Cannot launch app from alarm isolate (MethodChannel limitation)');
-        print('   ℹ️ App will be launched by WorkManager or when user opens it');
-        
-        // We CANNOT launch the app from here because:
-        // 1. This runs in an isolate (separate Dart VM)
-        // 2. MethodChannel doesn't work in isolates
-        // 3. AndroidAlarmManager.oneShot() also runs callbacks in isolates
-        // 4. No Dart-based solution works for launching app from isolate
-        //
-        // Solutions that DO work:
-        // - WorkManager (runs native code, can launch app)
-        // - User manually opens app
-        // - Native AlarmManager with PendingIntent (but needs to be scheduled from main app)
-        
-        // Just log the detection for now
-        await prefs.setInt('last_app_closed_detected', now);
-        await prefs.setInt('app_closed_detections', 
-          (prefs.getInt('app_closed_detections') ?? 0) + 1);
-          
-      } else {
-        print('   ✅ App is active - no action needed');
-      }
-      
-      // Always update keepalive timestamp
-      await prefs.setInt('last_keepalive_check', now);
-      
-    } catch (e) {
-      print('❌ [AppKeepalive] Error in callback: $e');
-    }
-  }
-  
-  /// Trigger callback that actually launches the app
-  /// This runs in response to the one-shot alarm
-  @pragma('vm:entry-point')
-  static Future<void> _appLaunchTrigger() async {
-    print('🚀 [AppKeepalive] App launch trigger fired!');
-    
-    try {
-      // Send broadcast to native AppRestartReceiver
-      // Note: We can't use MethodChannel from isolate, but we can use the
-      // platform-specific method channel that android_alarm_manager sets up
-      const channel = MethodChannel('com.example.hfc_app/app_launcher');
-      
-      // Try to call launchApp - this may not work from isolate
-      // but we attempt it anyway as a fallback
-      try {
-        await channel.invokeMethod('launchApp');
-        print('   ✅ App launch via MethodChannel succeeded');
-      } catch (e) {
-        print('   ⚠️ MethodChannel failed (expected in isolate): $e');
-        
-        // Alternative: use android_intent package to send broadcast
-        // But that also requires native platform channel...
-        // The reality is we need native code to handle this
-      }
-      
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setInt('last_app_launch_trigger', 
-        DateTime.now().millisecondsSinceEpoch);
-      
-    } catch (e) {
-      print('❌ [AppKeepalive] Error in launch trigger: $e');
-    }
-  }
-  
-  /// Launch the app using native Android Intent
-  /// NOTE: This method doesn't work from isolate context!
-  /// Kept for reference, but use _appLaunchTrigger() instead
-  static Future<void> _launchApp() async {
-    try {
-      // ⚠️ WARNING: MethodChannel doesn't work from alarm isolate!
-      // This is here for documentation purposes only
-      await _channel.invokeMethod('launchApp');
-      print('   ✅ [AppKeepalive] App launch requested via MethodChannel');
-    } catch (e) {
-      print('   ❌ [AppKeepalive] MethodChannel failed (expected in isolate): $e');
-    }
-  }
-  
   /// Update last active timestamp (call this periodically from UI)
+  /// This tells WorkManager and native code that app is still alive
+  @pragma('vm:entry-point')
   static Future<void> markAppActive() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setInt('last_active_timestamp', 
-        DateTime.now().millisecondsSinceEpoch);
+      final now = DateTime.now().millisecondsSinceEpoch;
+      await prefs.setInt('last_active_timestamp', now);
+      print('✅ [AppKeepalive] Updated last_active_timestamp: ${DateTime.now()}');
     } catch (e) {
       print('❌ [AppKeepalive] Failed to mark active: $e');
     }

@@ -104,7 +104,7 @@ adb pair 192.168.1.14:32997
 #### Step 5: Connect to phone
 ```bash
 # Replace IP:PORT with connection port from Step 4
-adb connect 192.168.1.8:45779
+adb connect 192.168.1.15:35231
 ```
 
 #### Step 6: Verify connection
@@ -121,7 +121,7 @@ flutter devices
 
 #### Step 8: Run the app on phone
 ```bash
-flutter run -d 192.168.1.8:45779
+flutter run -d 192.168.1.15:32957
 ```
 
 ### 🔄 Reconnect After Lost Connection
@@ -192,8 +192,8 @@ adb -s 192.168.1.15:39239 shell pm clear com.example.hfc_app
 If phone was already paired and still on same network:
 ```bash
 export PATH="/Users/developer/Library/Android/sdk/platform-tools:$PATH"
-adb connect 192.168.1.8:45779
-flutter run -d 192.168.1.15:42509
+adb connect 192.168.1.18:33037
+flutter run -d 192.168.1.18:33037
 ```
 
 ### Troubleshooting
@@ -217,10 +217,100 @@ adb connect 192.168.1.8:5555
 flutter run -d 192.168.1.8:5555
 ```
 
+
+# Run in emulator
+```bash
+flutter run -d emulator-5554
+```
+adb connect 192.168.1.14:40245
+# Capture Logs
+```bash
+export PATH="/Users/developer/Library/Android/sdk/platform-tools:$PATH" && cd /Users/developer/Documents/GitHub/HFC-App && flutter run -d 192.168.1.14:43283 2>&1 | tee docs/logs/flutter_app_logs_$(date +%Y%m%d_%H%M%S).log
+```
+
+# Test production mode logs
+```bash
+flutter build apk --release
+
+adb -s 192.168.1.14:37231 install -r build/app/outputs/flutter-apk/app-release.apk
+
+export PATH="/Users/developer/Library/Android/sdk/platform-tools:$PATH" && adb -s 192.168.1.14:37231 logcat -c && adb -s 192.168.1.15:37231 logcat | grep -E "I/flutter|🌐|🏠|⏰|📱|✅"
+```
+
+flutter clean && flutter pub get && flutter build apk --release
+
 -----------------------
 
   int _currentIndex = 3; // Start with Device page (HC20HomePage) as default
 
 create only UI desing and make only change in above suggested file and don't change anything in any other files code
 
-Note: as required only change in the code. dont change further in code, although if any thing importent you may recommend me by expain 
+Note: 
+1. as required only change in the code. dont change further in code, although if any thing importent you may recommend me with expaination 
+2. No need to create a summary document of the fix
+
+-------------------------
+Webhook data stoped from ForegroundService.kt
+        private const val ENABLE_NATIVE_WEBHOOKS = false  // ← CHANGE THIS TO true WHEN READY
+
+
+UI desing
+simple working fine:-
+you are as an ui & ux expert, can you improve attached login_page & register_page morden desing without change core functionalty for loging and registre process 
+
+----
+advance prompt working slightly complace ui desing may some ui issue:-
+you are as senior mobile UI/UX designer with experience designing high-conversion aI healthtech app, so Analyze attached clinical screen Improve clarity and visual hierarchy follow by modern iOS/Android design standards also Any UX best practices or patterns I should apply, Mobile-first design, modern style without change core functionalty of the screen/page
+
+Target users: Special Child Parents
+App category: Health tech app
+Platform: iOS / Android / both
+---------------------------------
+
+-----
+
+
+
+please check attached logs to root cause below error because I have keep mobile and device together and test but device automaticaly show disconnected and show trying reconnect then some time stoped or stuck some time reconnect, we dont know why do such behaver, althouch initial working after close and re-open the app but geeting issue when try reconnect so check logs and all required file to make a shoot process and fast reconnect
+
+
+please reconnect issue in attached logs  because when device out of range then try to reconnect and finaly stuck on showiing message 'ready to scan for devices" and when device come back on range or switch one then its not reconnect just keep showiing ready to scan for devices" so please fix it reconnect imidiatly once device available with in range
+
+sleep:-
+please check getAllDaySleepRows logic in documentation (README.md) and check in main.dart and let me know if we are making any mistake because we are not geeting Sleep history data
+
+"sleep": [
+  {
+    "dateTime": "2026-01-29T00:00:00",
+    "soberMin": 0,
+    "lightMin": 0,
+    "deepMin": 0,
+    "remMin": 0,
+    "napMin": 0
+  }
+
+  Added same isAppActive() check to avoid showing notification if app is already working.
+if posible minimise the app when alarm open relaunch the app
+so please fix it without impact on core working functionalties as working fine 
+
+------
+
+heartbeat can be very aggressive every 30 seconds so implement Dynamic alarm as per below
+ IF device CONNECTED: 
+ after lastRealtimeSync update Schedule alarm for: lastRealtimeSync + realtimeInterval + 1 min 
+
+IF device DISCONNECTED:
+after reconnect attempt fail update Schedule alarm for: now current time + reconnectInterval + 1 min
+
+add app minimise 5 sec after app relaunch
+
+Note: 
+1. as required only minimum change in the code. dont change further in code, although if any thing importent you may recommend me with expaination 
+
+
+setContentTitle("🔄 HFC App Restarting")
+
+
+How can we make functional alerts as show in settings_screen Stress Alerts, Fatigue Alerts BP Alerts SpO₂ Alerts. suggest a best practice recommendetion although these all data already available on this screen and save in storage
+
+for the download report buttone press, can we design a morden ui / ux pdf or image by using existing vitals and user & device details to download

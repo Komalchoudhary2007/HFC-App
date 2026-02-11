@@ -1,12 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/constants/app_text_styles.dart';
+import '../../services/health_data_service.dart';
+import '../../services/device_status_service.dart';
+import '../../services/hc20_service.dart';  // NEW: Import HC20Service for data refresh
 
 class VitalsScreen extends StatelessWidget {
   const VitalsScreen({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
+    final deviceStatus = Provider.of<DeviceStatusService>(context);
+    
     return Container(
       decoration: const BoxDecoration(color: Color(0xFFE7E2FD)),
       child: SingleChildScrollView(
@@ -14,9 +20,55 @@ class VitalsScreen extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            // Last Sync Indicator with Tap-to-Refresh
+            GestureDetector(
+              onTap: () => _handleRefreshData(context),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: deviceStatus.isRealtimeDataStale 
+                      ? const Color(0xFFFFF3E0) 
+                      : const Color(0xFFE8F5E9),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: deviceStatus.isRealtimeDataStale 
+                        ? Colors.orange.withOpacity(0.3) 
+                        : Colors.green.withOpacity(0.3),
+                    width: 1,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      deviceStatus.isRealtimeDataStale ? Icons.warning_amber : Icons.check_circle,
+                      color: deviceStatus.isRealtimeDataStale ? Colors.orange : Colors.green,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Last updated: ${deviceStatus.getLastRealtimeSyncText()}',
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontFamily: 'poppins',
+                          fontWeight: FontWeight.w500,
+                          color: Colors.black87,
+                        ),
+                      ),
+                    ),
+                    Icon(
+                      Icons.refresh,
+                      color: deviceStatus.isRealtimeDataStale ? Colors.orange : Colors.green,
+                      size: 20,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
             _buildVitalsCard(context),
             const SizedBox(height: 16),
-            _buildEnvironmentalCard(context),
+            _buildTemperatureCard(context),
             const SizedBox(height: 16),
             _buildSleepDataCard(context),
             const SizedBox(height: 16),
@@ -24,12 +76,95 @@ class VitalsScreen extends StatelessWidget {
             const SizedBox(height: 16),
             _buildHRV2MetricsCard(context),
             const SizedBox(height: 16),
-            _buildTemperatureCard(context),
-            const SizedBox(height: 100),
+            _buildEnvironmentalCard(context),
+            const SizedBox(height: 16),
           ],
         ),
       ),
     );
+  }
+
+  // Handle refresh data when user taps the Last Sync indicator
+  Future<void> _handleRefreshData(BuildContext context) async {
+    // Get HC20Service to request fresh data
+    final hc20Service = Provider.of<HC20Service>(context, listen: false);
+    
+    // Check if device is connected
+    if (!hc20Service.isConnected) {
+      // Show error snackbar if not connected
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Row(
+            children: [
+              Icon(Icons.warning_amber, color: Colors.white, size: 20),
+              SizedBox(width: 12),
+              Text('No device connected. Please connect your HC20 first.'),
+            ],
+          ),
+          duration: const Duration(seconds: 3),
+          backgroundColor: Colors.red.shade600,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+        ),
+      );
+      return;
+    }
+    
+    // Show loading snackbar
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Row(
+          children: [
+            SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+              ),
+            ),
+            SizedBox(width: 12),
+            Text('Syncing with device...'),
+          ],
+        ),
+        duration: const Duration(seconds: 2),
+        backgroundColor: const Color(0xFF532A7B),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
+      ),
+    );
+    
+    // Request fresh data from the device (triggers time sync)
+    final success = await hc20Service.requestFreshData();
+    
+    // Show result
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              Icon(
+                success ? Icons.check_circle : Icons.error_outline,
+                color: Colors.white,
+                size: 20,
+              ),
+              const SizedBox(width: 12),
+              Text(success ? 'Data refresh triggered!' : 'Failed to refresh. Please try again.'),
+            ],
+          ),
+          duration: const Duration(seconds: 2),
+          backgroundColor: success ? Colors.green.shade600 : Colors.orange.shade600,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+        ),
+      );
+    }
   }
 
   // Get responsive scale factor based on screen width
@@ -43,6 +178,8 @@ class VitalsScreen extends StatelessWidget {
 
   Widget _buildVitalsCard(BuildContext context) {
     final scale = _getScaleFactor(context);
+    final healthData = Provider.of<HealthDataService>(context);
+    
     return Container(
       padding: EdgeInsets.all(20 * scale),
       decoration: ShapeDecoration(
@@ -72,10 +209,10 @@ class VitalsScreen extends StatelessWidget {
           return Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              _buildCircularHeartRate(circleSize, scale), 
+              _buildCircularHeartRate(circleSize, scale, healthData), 
               SizedBox(width: 16 * scale),
               Expanded(
-                child: _buildStatsGrid(context, scale),
+                child: _buildStatsGrid(context, scale, healthData),
               ),
             ],
           );
@@ -84,7 +221,10 @@ class VitalsScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildCircularHeartRate(double size, double scale) {
+  Widget _buildCircularHeartRate(double size, double scale, HealthDataService healthData) {
+    final heartRate = healthData.heartRate ?? 0;
+    final spo2 = healthData.spo2 ?? 0;
+    
     return Stack(
       clipBehavior: Clip.none,
       children: [
@@ -137,7 +277,7 @@ class VitalsScreen extends StatelessWidget {
                 ),
                 SizedBox(height: 8 * scale),
                 Text(
-                  '79',
+                  heartRate > 0 ? '$heartRate' : '--',
                   style: TextStyle(
                     color: Colors.black87,
                     fontSize: size * 0.25,
@@ -183,7 +323,7 @@ class VitalsScreen extends StatelessWidget {
               ],
             ),
             child: Text(
-              '96% SpO₂',
+              spo2 > 0 ? '$spo2% SpO₂' : '--% SpO₂',
               style: TextStyle(
                 color: const Color(0xFF9C27B0),
                 fontSize: size * 0.065,
@@ -197,7 +337,17 @@ class VitalsScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildStatsGrid(BuildContext context, double scale) {
+  Widget _buildStatsGrid(BuildContext context, double scale, HealthDataService healthData) {
+    // Get dynamic values from service
+    final rri = healthData.rri != null 
+        ? '${healthData.rri} ms' 
+        : '-- ms';
+    final bloodPressure = healthData.bloodPressure != null 
+        ? '${healthData.bloodPressure![0]}/${healthData.bloodPressure![1]}' 
+        : '--/--';
+    final steps = healthData.steps != null ? '${healthData.steps}' : '--';
+    final distance = healthData.distance != null ? '${healthData.distance}m' : '--m';
+    
     return GridView.count(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -206,10 +356,10 @@ class VitalsScreen extends StatelessWidget {
       crossAxisSpacing: 8 * scale,
       childAspectRatio: 1.8,
       children: [
-        _buildStatCard(context, '31.5°C', 'Temperature', Icons.thermostat_outlined, scale),
-        _buildStatCard(context, '122/80', 'Blood Pressure', Icons.favorite_border, scale),
-        _buildStatCard(context, '898', 'Steps', Icons.directions_walk, scale),
-        _buildStatCard(context, '31%', 'Battery', Icons.battery_charging_full, scale),
+        _buildStatCard(context, rri, 'RRI', Icons.favorite_border, scale),
+        _buildStatCard(context, bloodPressure, 'Blood Pressure', Icons.monitor_heart, scale),
+        _buildStatCard(context, steps, 'Steps', Icons.directions_walk, scale),
+        _buildStatCard(context, distance, 'Distance', Icons.straighten, scale),
       ],
     );
   }
@@ -277,6 +427,12 @@ class VitalsScreen extends StatelessWidget {
 
   Widget _buildEnvironmentalCard(BuildContext context) {
     final scale = _getScaleFactor(context);
+    final healthData = Provider.of<HealthDataService>(context);
+    
+    // Get barometric pressure and wear status
+    final baroPressure = healthData.barometricPressure;
+    final wearStatus = healthData.wearStatus;
+    
     return Container(
       padding: EdgeInsets.all(20 * scale),  
       decoration: ShapeDecoration(
@@ -328,7 +484,7 @@ class VitalsScreen extends StatelessWidget {
                     ),
                     SizedBox(height: 8 * scale),
                     Text(
-                      '96868 Pa',
+                      baroPressure != null ? '$baroPressure Pa' : '-- Pa',
                       style: TextStyle(
                         color: const Color(0xFF2D1B4E),
                         fontSize: 16 * scale,
@@ -360,7 +516,9 @@ class VitalsScreen extends StatelessWidget {
                     ),
                     SizedBox(height: 8 * scale),
                     Text(
-                      'Worn',
+                      wearStatus != null 
+                        ? (wearStatus == 1 ? 'Worn' : 'Not Worn')
+                        : '--',
                       style: TextStyle(
                         color: const Color(0xFF532A7B),
                         fontSize: 16 * scale,
@@ -380,6 +538,32 @@ class VitalsScreen extends StatelessWidget {
 
   Widget _buildSleepDataCard(BuildContext context) {
     final scale = _getScaleFactor(context);
+    final healthData = Provider.of<HealthDataService>(context);
+    
+    // Get sleep data: [status, deep, light, rem, awake]
+    final sleepData = healthData.sleepData ?? [0, 0, 0, 0, 0];
+    
+    // Calculate total duration (skip status at index 0, sum indices 1-4)
+    int totalMinutes = 0;
+    if (sleepData.length >= 5) {
+      totalMinutes = sleepData[1] + sleepData[2] + sleepData[3] + sleepData[4];
+    }
+    final hours = totalMinutes ~/ 60;
+    final minutes = totalMinutes % 60;
+    final durationText = totalMinutes > 0 ? '${hours}h ${minutes}min' : '--';
+    
+    // Get individual sleep stages (indices 1-4)
+    final deepSleep = sleepData.length >= 5 ? sleepData[1] : 0;
+    final lightSleep = sleepData.length >= 5 ? sleepData[2] : 0;
+    final remSleep = sleepData.length >= 5 ? sleepData[3] : 0;
+    final awake = sleepData.length >= 5 ? sleepData[4] : 0;
+    
+    // Ensure flex values are at least 1 to avoid rendering errors
+    final deepFlex = deepSleep > 0 ? deepSleep : 1;
+    final lightFlex = lightSleep > 0 ? lightSleep : 1;
+    final remFlex = remSleep > 0 ? remSleep : 1;
+    final awakeFlex = awake > 0 ? awake : 1;
+    
     return Container(
       padding: EdgeInsets.all(20 * scale),
       decoration: ShapeDecoration(
@@ -412,7 +596,7 @@ class VitalsScreen extends StatelessWidget {
                 ),
               ),  
               Text(   
-                '3h 2min',
+                durationText,
                 style: TextStyle( 
                   color: Colors.black,
                   fontSize: 20 * scale,
@@ -433,28 +617,28 @@ class VitalsScreen extends StatelessWidget {
             child: Row(
               children: [
                 Expanded(
-                  flex: 48,
+                  flex: deepFlex,
                   child: Container(
                     height: 24 * scale,
                     color: const Color(0xFF8DABEA),
                   ),
                 ),
                 Expanded(
-                  flex: 138,
+                  flex: lightFlex,
                   child: Container(
                     height: 24 * scale,
                     color: const Color(0xFFB0C1E6),
                   ),
                 ),
                 Expanded(
-                  flex: 34,
+                  flex: remFlex,
                   child: Container(
                     height: 24 * scale,
                     color: const Color(0xFFEDCBEB),
                   ),
                 ),
                 Expanded(
-                  flex: 2,
+                  flex: awakeFlex,
                   child: Container(
                     height: 24 * scale,
                     color: const Color(0xFFDDDDDD),
@@ -470,25 +654,25 @@ class VitalsScreen extends StatelessWidget {
               _buildSleepStage(
                 const Color(0xFF8DABEA),
                 'Deep Sleep',
-                '48 min',
+                '$deepSleep min',
                 scale,
               ),
               _buildSleepStage(
                 const Color(0xFFB0C1E6),
                 'Light Sleep',
-                '138 min',
+                '$lightSleep min',
                 scale,
               ),
               _buildSleepStage(
                 const Color(0xFFEDCBEB),
                 'REM Sleep',
-                '34 min',
+                '$remSleep min',
                 scale,
               ),
               _buildSleepStage(
                 const Color(0xFFDDDDDD),
                 'Awake',
-                '2 min',
+                '$awake min',
                 scale,
               ),
             ],
@@ -536,6 +720,15 @@ class VitalsScreen extends StatelessWidget {
 
   Widget _buildHRVMetricsCard(BuildContext context) {
     final scale = _getScaleFactor(context);
+    final healthData = Provider.of<HealthDataService>(context);
+    
+    // Get dynamic HRV values
+    final sdnn = healthData.sdnn ?? 0;
+    final totalPower = healthData.totalPower ?? 0;
+    final lowFrequency = healthData.lowFrequency ?? 0;
+    final highFrequency = healthData.highFrequency ?? 0;
+    final veryLowFrequency = healthData.veryLowFrequency ?? 0;
+    
     return Container(
       padding: EdgeInsets.all(24 * scale),
       decoration: BoxDecoration(
@@ -597,7 +790,7 @@ class VitalsScreen extends StatelessWidget {
               ),
               SizedBox(width: 16 * scale),
               Text(
-                '45,960',
+                sdnn > 0 ? '$sdnn' : '--',
                 style: TextStyle(
                   color: const Color(0xFF2E7D32),
                   fontSize: 14 * scale,
@@ -617,7 +810,7 @@ class VitalsScreen extends StatelessWidget {
               ),
               SizedBox(width: 16 * scale),
               Text(
-                '4,233,783',
+                totalPower > 0 ? '$totalPower' : '--',
                 style: TextStyle(
                   color: const Color(0xFF2E7D32),
                   fontSize: 14 * scale,
@@ -633,11 +826,23 @@ class VitalsScreen extends StatelessWidget {
           // Bottom Row: Three Pill Cards in One Row
           Row(
             children: [
-              Expanded(child: _buildCompactPillCard('Low Frequency', '777,621', scale)),
+              Expanded(child: _buildCompactPillCard(
+                'Low Frequency',
+                lowFrequency > 0 ? '$lowFrequency' : '--',
+                scale
+              )),
               SizedBox(width: 8 * scale),
-              Expanded(child: _buildCompactPillCard('High Frequency', '1,515,727', scale)),
+              Expanded(child: _buildCompactPillCard(
+                'High Frequency',
+                highFrequency > 0 ? '$highFrequency' : '--',
+                scale
+              )),
               SizedBox(width: 8 * scale),
-              Expanded(child: _buildCompactPillCard('Very Low Frequency', '1,623,215', scale)),
+              Expanded(child: _buildCompactPillCard(
+                'Very Low Frequency',
+                veryLowFrequency > 0 ? '$veryLowFrequency' : '--',
+                scale
+              )),
             ],
           ),
         ],
@@ -730,6 +935,14 @@ class VitalsScreen extends StatelessWidget {
 
   Widget _buildHRV2MetricsCard(BuildContext context) {
     final scale = _getScaleFactor(context);
+    final healthData = Provider.of<HealthDataService>(context);
+    
+    // Get dynamic HRV2 values
+    final mentalStress = healthData.mentalStress ?? 0;
+    final fatigue = healthData.fatigueLevel ?? 0;
+    final stressResistance = healthData.stressResistance ?? 0;
+    final regulationAbility = healthData.regulationAbility ?? 0;
+    
     return Container(
       padding: EdgeInsets.all(24 * scale),
       decoration: BoxDecoration(
@@ -772,10 +985,34 @@ class VitalsScreen extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
-              _buildCompactCircularRing('Mental\nStress', '46', const Color(0xFFC084FC), 0.46, scale),
-              _buildCompactCircularRing('Fatigue', '39', const Color(0xFFF59E0B), 0.39, scale),
-              _buildCompactCircularRing('Stress\nResistance', '62', const Color(0xFF22C55E), 0.62, scale),
-              _buildCompactCircularRing('Regulation\nAbility', '47', const Color(0xFFA855F7), 0.47, scale),
+              _buildCompactCircularRing(
+                'Mental\nStress', 
+                mentalStress > 0 ? '$mentalStress' : '--', 
+                const Color(0xFFC084FC), 
+                mentalStress / 100.0, 
+                scale
+              ),
+              _buildCompactCircularRing(
+                'Fatigue', 
+                fatigue > 0 ? '$fatigue' : '--', 
+                const Color(0xFFF59E0B), 
+                fatigue / 100.0, 
+                scale
+              ),
+              _buildCompactCircularRing(
+                'Stress\nResistance', 
+                stressResistance > 0 ? '$stressResistance' : '--', 
+                const Color(0xFF22C55E), 
+                stressResistance / 100.0, 
+                scale
+              ),
+              _buildCompactCircularRing(
+                'Regulation\nAbility', 
+                regulationAbility > 0 ? '$regulationAbility' : '--', 
+                const Color(0xFFA855F7), 
+                regulationAbility / 100.0, 
+                scale
+              ),
             ],
           ),
         ],
@@ -878,6 +1115,21 @@ class VitalsScreen extends StatelessWidget {
 
   Widget _buildTemperatureCard(BuildContext context) {
     final scale = _getScaleFactor(context);
+    final healthData = Provider.of<HealthDataService>(context);
+    
+    // Get temperature array: [wrist, ambient, body]
+    final tempArray = healthData.temperatureArray;
+    
+    String handTempStr = '--°C';
+    String envTempStr = '--°C';
+    String bodyTempStr = '--°C';
+    
+    if (tempArray != null && tempArray.length >= 3) {
+      handTempStr = '${tempArray[0].toStringAsFixed(1)}°C';
+      envTempStr = '${tempArray[1].toStringAsFixed(1)}°C';
+      bodyTempStr = '${tempArray[2].toStringAsFixed(1)}°C';
+    }
+    
     return Container(
       padding: EdgeInsets.all(20 * scale),
       decoration: ShapeDecoration(
@@ -901,7 +1153,7 @@ class VitalsScreen extends StatelessWidget {
             'Temperature',
             style: TextStyle(
               color: Colors.black,
-              fontSize: 22 * scale,
+              fontSize: 18 * scale,
               fontFamily: 'poppins',
               fontWeight: FontWeight.w700,
             ),
@@ -922,11 +1174,11 @@ class VitalsScreen extends StatelessWidget {
           SizedBox(height: 20 * scale),
           Row(
             children: [
-              Expanded(child: _buildTempCard('Hand Temp', '31.62°C', scale)),
+              Expanded(child: _buildTempCard('Hand Temp', handTempStr, scale)),
               SizedBox(width: 12 * scale),
-              Expanded(child: _buildTempCard('Env Temp', '29.62°C', scale)),
+              Expanded(child: _buildTempCard('Env Temp', envTempStr, scale)),
               SizedBox(width: 12 * scale),
-              Expanded(child: _buildTempCard('Body Temp', '36.09°C', scale)),
+              Expanded(child: _buildTempCard('Body Temp', bodyTempStr, scale)),
             ],
           ),
         ],

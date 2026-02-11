@@ -14,6 +14,14 @@
     <!-- Required to turn on screen when launching app -->
     <uses-permission android:name="android.permission.DISABLE_KEYGUARD" />
     
+    <!-- Bluetooth permissions for HC20 device connection -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    
     <application
         android:label="hfc_app"
         android:name="${applicationName}"

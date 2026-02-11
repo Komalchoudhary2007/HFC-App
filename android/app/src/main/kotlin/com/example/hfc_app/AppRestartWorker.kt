@@ -79,8 +79,11 @@ class AppRestartWorker(
     }
     
     override fun doWork(): Result {
-        Log.d(TAG, "🔄🔄🔄 WORKMANAGER TRIGGERED 🔄🔄🔄")
-        Log.d(TAG, "   Time: ${java.util.Date()}")
+        Log.d(TAG, "")
+        Log.d(TAG, "���🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧")
+        Log.d(TAG, "🔧 WORKMANAGER TRIGGERED - Source: WORKMANAGER (15-min backup)")
+        Log.d(TAG, "🔧 Time: ${java.text.SimpleDateFormat("HH:mm:ss").format(java.util.Date())}")
+        Log.d(TAG, "🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧🔧")
         
         try {
             // Check if app was recently active
@@ -131,7 +134,7 @@ class AppRestartWorker(
                 } else {
                     // Screen is OFF - use full-screen intent to open app UI
                     Log.d(TAG, "   🌙 Screen is OFF - launching app via AppLauncherService...")
-                    AppLauncherService.start(context)
+                    AppLauncherService.start(context, "workmanager_15min")
                 }
                 
                 // Log this event

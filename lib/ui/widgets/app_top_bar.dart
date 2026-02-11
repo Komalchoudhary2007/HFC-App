@@ -42,36 +42,32 @@ class AppTopBar extends StatelessWidget implements PreferredSizeWidget {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    // App Logo (placeholder - replace with actual logo from assets)
+                    // Hamburger Menu Icon - Opens drawer
                     InkWell(
-                      onTap: onLogoTap,  // NEW: Open drawer on tap
-                      borderRadius: BorderRadius.circular(8),
+                      onTap: onLogoTap,  // Open drawer on tap
+                      borderRadius: BorderRadius.circular(4),
                       child: Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
+                        padding: const EdgeInsets.all(2),
                         child: Icon(
-                          Icons.favorite,
-                          color: AppColors.primaryPurple,
-                          size: 24,
+                          Icons.menu,
+                          color: Colors.white,
+                          size: 25,
                         ),
                       ),
                     ),
                     const SizedBox(width: 12),
-                    // App Name + Subtitle
-                    Expanded(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // App Name: "HireForCare"
-                          RichText(
+                    // App Logo
+                    Container(
+                      height: 17,
+                      child: Image.asset(
+                        'assets/images/HFC-logo.png',
+                        fit: BoxFit.contain,
+                        errorBuilder: (context, error, stackTrace) {
+                          // Fallback to text if image fails to load
+                          return RichText(
                             text: TextSpan(
                               style: const TextStyle(
-                                fontSize: 18,
+                                fontSize: 12,
                                 fontWeight: FontWeight.bold,
                                 height: 1.2,
                               ),
@@ -90,22 +86,11 @@ class AppTopBar extends StatelessWidget implements PreferredSizeWidget {
                                 ),
                               ],
                             ),
-                          ),
-                          const SizedBox(height: 2),
-                          // Subtitle
-                          Text(
-                            'One Stop Special Child Care Solution',
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: Colors.white.withOpacity(0.7), // Light lavender / muted white
-                              height: 1.2,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
+                          );
+                        },
                       ),
                     ),
+                    const SizedBox(width: 12),
                   ],
                 ),
               ),
@@ -116,7 +101,8 @@ class AppTopBar extends StatelessWidget implements PreferredSizeWidget {
               // Now reads from HC20Service (global state)
               Consumer<HC20Service>(
                 builder: (context, hc20Service, child) {
-                  final deviceName = hc20Service.connectedDevice?.name ?? 'HC20';
+                  // final deviceName = hc20Service.connectedDevice?.name ?? 'HC20';
+                  final deviceName = 'HC20';
                   final isConnected = hc20Service.isConnected;
                   final connectionStatus = hc20Service.getConnectionStatus();
                   

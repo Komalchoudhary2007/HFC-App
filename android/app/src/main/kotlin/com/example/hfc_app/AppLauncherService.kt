@@ -33,10 +33,17 @@ class AppLauncherService : Service() {
         
         /**
          * Start this service to launch the app
+         * @param launchSource - who triggered this launch (for logging)
          */
-        fun start(context: Context) {
-            Log.d(TAG, "🚀 Starting AppLauncherService...")
+        fun start(context: Context, launchSource: String = "unknown") {
+            Log.d(TAG, "")
+            Log.d(TAG, "�📦📦📦📦📦📦📦📦📦📦📦📦📦📦📦📦📦📦📦📦📦📦📦📦📦📦📦📦📦")
+            Log.d(TAG, "📦 AppLauncherService START - Source: $launchSource")
+            Log.d(TAG, "📦 Time: ${java.text.SimpleDateFormat("HH:mm:ss").format(java.util.Date())}")
+            Log.d(TAG, "📦📦📦📦📦📦📦📦📦📦📦📦📦📦📦📦📦📦📦📦📦📦📦📦📦📦📦📦📦📦")
+            
             val intent = Intent(context, AppLauncherService::class.java)
+            intent.putExtra("launch_source", launchSource)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
@@ -54,7 +61,8 @@ class AppLauncherService : Service() {
     }
     
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.d(TAG, "🎯 onStartCommand - launching app NOW")
+        val launchSource = intent?.getStringExtra("launch_source") ?: "unknown"
+        Log.d(TAG, "🎯 onStartCommand - launching app NOW (source: $launchSource)")
         
         // Step 1: Start as foreground service immediately (required on Android 8+)
         val notification = createNotification()

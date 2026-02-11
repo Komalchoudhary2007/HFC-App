@@ -12,11 +12,21 @@ void callbackDispatcher() {
     
     try {
       final prefs = await SharedPreferences.getInstance();
-      final deviceId = prefs.getString('saved_device_id');
-      final isConnected = prefs.getBool('device_connected') ?? false;
       final lastActive = prefs.getInt('last_active_timestamp') ?? 0;
       final now = DateTime.now().millisecondsSinceEpoch;
       final minutesSinceActive = (now - lastActive) ~/ 60000;
+      
+      // CRITICAL FIX: Early return if main engine is active
+      // This prevents BLE disconnection caused by WorkManager creating a new Flutter engine
+      // that interferes with the main app's BLE connection
+      // Threshold: 10 minutes (conservative - app is definitely active if < 10 min)
+      if (minutesSinceActive < 10) {
+        print('   ✅ Main engine is active ($minutesSinceActive min ago) - skipping to prevent BLE disconnect');
+        return Future.value(true);
+      }
+      
+      final deviceId = prefs.getString('saved_device_id');
+      final isConnected = prefs.getBool('device_connected') ?? false;
       
       if (deviceId == null) {
         print('⚠️ [WorkManager] No device data - skipping');

@@ -16,6 +16,7 @@ import android.widget.Toast
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import io.reactivex.plugins.RxJavaPlugins
 
 class MainActivity: FlutterActivity() {
     private val CHANNEL = "com.hfc.app/background"
@@ -49,23 +50,49 @@ class MainActivity: FlutterActivity() {
         
         // Check if launched from background service
         val launchedFromBackground = intent?.getBooleanExtra("launched_from_background", false) ?: false
-        val launchReason = intent?.getStringExtra("launch_reason")
+        val launchReason = intent?.getStringExtra("launch_reason") ?: "user_opened"
+        
+        Log.d(TAG, "")
+        Log.d(TAG, "🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀")
+        Log.d(TAG, "🚀 APP LAUNCHED - Source: $launchReason")
+        Log.d(TAG, "🚀 Time: ${java.text.SimpleDateFormat("HH:mm:ss").format(java.util.Date())}")
+        Log.d(TAG, "🚀 From background: $launchedFromBackground")
+        Log.d(TAG, "🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀")
         
         if (launchedFromBackground) {
-            Log.d(TAG, "🚀🚀🚀 APP LAUNCHED FROM BACKGROUND! 🚀🚀🚀")
-            Log.d(TAG, "   Reason: $launchReason")
-            Log.d(TAG, "   Time: ${System.currentTimeMillis()}")
             
             // Dismiss any restart notification
             val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
             notificationManager.cancel(9999) // NOTIFICATION_ID from AppLauncher
             notificationManager.cancel(9998) // NOTIFICATION_ID from AppLauncherService
+            
+            // Auto-minimize after 10 seconds (allow BLE to connect first)
+            Log.d(TAG, "⏰ Auto-minimize scheduled in 10 seconds...")
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                Log.d(TAG, "📱 Auto-minimizing app to background (silent relaunch)")
+                moveTaskToBack(true)
+            }, 10000) // 10 seconds delay for BLE connection
         }
         
         // Schedule native WorkManager to restart app every 15 minutes
         // This is the MOST RELIABLE method for auto-restarting closed app
         AppRestartWorker.schedule(applicationContext)
         Log.d(TAG, "✅ Native WorkManager scheduled (15-min restart)")
+        
+        // ✅ FIX: Handle RxJava undeliverable exceptions globally
+        // This prevents crashes when BLE disconnects after subscription is cancelled
+        RxJavaPlugins.setErrorHandler { throwable ->
+            if (throwable is io.reactivex.exceptions.UndeliverableException) {
+                // Log but don't crash - this is expected during BLE cleanup
+                android.util.Log.w("RxJava", "Undeliverable exception received (expected during BLE disconnect): ${throwable.cause?.message}")
+            } else {
+                // Re-throw unexpected errors to maintain normal error handling
+                Thread.currentThread().uncaughtExceptionHandler?.uncaughtException(
+                    Thread.currentThread(), 
+                    throwable
+                )
+            }
+        }
     }
     
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -108,7 +135,12 @@ class MainActivity: FlutterActivity() {
                     val deviceId = call.argument<String>("deviceId")
                     val heartRate = call.argument<Int>("heartRate")
                     val spo2 = call.argument<Int>("spo2")
-                    val temperature = call.argument<Double>("temperature")
+                    // Handle both Integer and Double for temperature
+                    val temperature = when (val tempArg = call.argument<Any>("temperature")) {
+                        is Int -> tempArg.toDouble()
+                        is Double -> tempArg
+                        else -> null
+                    }
                     val batteryLevel = call.argument<Int>("batteryLevel")
                     val bpSystolic = call.argument<Int>("bloodPressureSystolic")
                     val bpDiastolic = call.argument<Int>("bloodPressureDiastolic")
@@ -136,6 +168,13 @@ class MainActivity: FlutterActivity() {
                     val status = testAlarmScheduling()
                     result.success(status)
                 }
+                "moveToBackground" -> {
+                    // Move app to background (like pressing home button)
+                    // This keeps the app running but hides it
+                    Log.d(TAG, "📱 Moving app to background (stay connected)")
+                    moveTaskToBack(true)
+                    result.success(true)
+                }
                 else -> result.notImplemented()
             }
         }
@@ -161,8 +200,8 @@ class MainActivity: FlutterActivity() {
             startService(serviceIntent)
         }
         
-        // Schedule periodic sync alarms as backup
-        SyncAlarmReceiver.scheduleSync(this)
+        // DISABLED: Old fixed 5-min SyncAlarmReceiver - now using dynamic AppRestartReceiver instead
+        // SyncAlarmReceiver.scheduleSync(this)
         println("✅ Native BLE service started with device: $deviceAddress")
     }
     
@@ -208,9 +247,9 @@ class MainActivity: FlutterActivity() {
         // Keep screen on
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         
-        // Schedule periodic sync alarms to keep service alive
-        SyncAlarmReceiver.scheduleSync(this)
-        println("✅ Background execution enabled with sync alarms")
+        // DISABLED: Old fixed 5-min SyncAlarmReceiver - now using dynamic AppRestartReceiver instead
+        // SyncAlarmReceiver.scheduleSync(this)
+        println("✅ Background execution enabled (using dynamic AppRestartReceiver)")
     }
     
     private fun disableBackgroundExecution() {
@@ -480,7 +519,12 @@ class MainActivity: FlutterActivity() {
                     val userPhone = call.argument<String>("userPhone")
                     val heartRate = call.argument<Int>("heartRate") ?: 0
                     val spo2 = call.argument<Int>("spo2") ?: 0
-                    val temperature = call.argument<Double>("temperature") ?: 0.0
+                    // Handle both Integer and Double for temperature
+                    val temperature = when (val tempArg = call.argument<Any>("temperature")) {
+                        is Int -> tempArg.toDouble()
+                        is Double -> tempArg
+                        else -> 0.0
+                    }
                     val batteryLevel = call.argument<Int>("batteryLevel") ?: 0
                     
                     Log.d(TAG, "🚀 [KeepAlive] Starting main engine keep-alive mode")
@@ -499,7 +543,12 @@ class MainActivity: FlutterActivity() {
                 "updateHealthData" -> {
                     val heartRate = call.argument<Int>("heartRate") ?: 0
                     val spo2 = call.argument<Int>("spo2") ?: 0
-                    val temperature = call.argument<Double>("temperature") ?: 0.0
+                    // Handle both Integer and Double for temperature
+                    val temperature = when (val tempArg = call.argument<Any>("temperature")) {
+                        is Int -> tempArg.toDouble()
+                        is Double -> tempArg
+                        else -> 0.0
+                    }
                     val batteryLevel = call.argument<Int>("batteryLevel") ?: 0
                     val steps = call.argument<Int>("steps") ?: 0
                     val bpSystolic = call.argument<Int>("bpSystolic") ?: 0

@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 8.0.78+1
+version: 8.1.05+1
 
 environment:
   sdk: ^3.5.4
@@ -64,6 +64,18 @@ dependencies:
   
   # Local notifications
   flutter_local_notifications: ^17.2.3
+  
+  # Device information
+  device_info_plus: ^10.1.2
+  
+  # Location services
+  geolocator: ^11.0.0
+  
+  # URL launcher for opening videos
+  url_launcher: ^6.3.1
+  
+  # Calendar for appointment booking
+  table_calendar: ^3.1.2
 
 dev_dependencies:
   flutter_test:
@@ -75,6 +87,9 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^4.0.0
+  
+  # Launcher icon generator
+  flutter_launcher_icons: ^0.13.1
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -117,5 +132,16 @@ flutter:
   #       - asset: fonts/TrajanPro_Bold.ttf
   #         weight: 700
   #
+  # For details regarding fonts from package dependencies,
+  # see https://flutter.dev/to/font-from-package
+
+# Flutter Launcher Icons Configuration
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icons/app_icon.png"
+  min_sdk_android: 21
+  adaptive_icon_background: "#532A7B"  # HFC purple brand color
+  adaptive_icon_foreground: "assets/icons/app_icon.png"
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package

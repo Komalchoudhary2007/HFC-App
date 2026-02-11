@@ -51,7 +51,8 @@ class SyncAlarmReceiver : BroadcastReceiver() {
     }
     
     override fun onReceive(context: Context, intent: Intent) {
-        println("⏰ [SyncAlarm] Triggered - ensuring service is running")
+        println("⏰⏰⏰ [SyncAlarm] ALARM FIRED at ${java.text.SimpleDateFormat("HH:mm:ss").format(java.util.Date())}")
+        println("⏰ [SyncAlarm] This alarm is DEPRECATED - should not fire anymore!")
         
         // Ensure foreground service is running
         val serviceIntent = Intent(context, ForegroundService::class.java)
