@@ -149,7 +149,7 @@ class AppRestartReceiver : BroadcastReceiver() {
                 AppLauncher.scheduleKeepaliveRestart(context, 300, "keepalive_service") // 5 minutes
                 
                 // Also schedule native WorkManager
-                AppRestartWorker.schedule(context)
+                // AppRestartWorker.schedule(context)
                 
                 Log.d(TAG, "✅ Restart mechanisms scheduled after boot")
             }

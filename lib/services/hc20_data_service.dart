@@ -262,7 +262,8 @@ class HC20DataService extends ChangeNotifier {
   }) {
     // Convert rows to JSON lists (filter only valid rows before conversion)
     final hrv2JsonList = hrv2Rows
-            ?.map((row) => _convertRowToJson(row))
+            ?.where((row) => row.valid == true)
+            .map((row) => _convertRowToJson(row))
             .where((r) => r != null)
             .toList() ??
         [];

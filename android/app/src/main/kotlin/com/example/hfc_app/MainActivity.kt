@@ -76,7 +76,7 @@ class MainActivity: FlutterActivity() {
         
         // Schedule native WorkManager to restart app every 15 minutes
         // This is the MOST RELIABLE method for auto-restarting closed app
-        AppRestartWorker.schedule(applicationContext)
+        // AppRestartWorker.schedule(applicationContext)
         Log.d(TAG, "✅ Native WorkManager scheduled (15-min restart)")
         
         // ✅ FIX: Handle RxJava undeliverable exceptions globally

@@ -8,6 +8,8 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:device_info_plus/device_info_plus.dart';
+import 'package:flutter_reactive_ble/flutter_reactive_ble.dart'; // ✅ NEW: For BleStatus
+import 'models/hc20_connection_event.dart'; // ✅ PHASE 1: Import event model
 import 'pages/all_data_page.dart';
 import 'pages/login_page.dart';
 import 'services/auth_service.dart';
@@ -25,7 +27,7 @@ import 'services/hc20_data_service.dart';
 import 'services/hc20_connection_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'ui/widgets/bottom_navigation_bar.dart';
-import 'widgets/hc20_status_widgets.dart';
+import 'widgets/hc20_status_widgets.dart' as HCWidgets; // ✅ NEW: Import widgets with prefix
 import 'ui/screens/home_screen.dart';
 import 'ui/screens/vitals_screen.dart';
 import 'ui/screens/clinical_screen.dart';
@@ -40,20 +42,27 @@ void main() async {
   await _checkExactAlarmPermission(); // Check SCHEDULE_EXACT_ALARM (Android 12+)
   await AppKeepaliveService.initialize(); // AlarmManager for reliable keepalive
   await AppKeepaliveService.startPeriodicKeepalive();
-  // Save sync intervals to SharedPreferences so native Android code can read them
+  // ✅ PHASE 2: Save sync intervals to native (removed reconnectInterval - SDK handles)
   await AppKeepaliveService.saveIntervalsToNative(
     realtimeInterval: SyncScheduler.realtimeInterval,
-    reconnectInterval: SyncScheduler.reconnectInterval,
+    // ❌ PHASE 2: Removed reconnectInterval (SDK handles reconnection)
   );
   print(
       '✅ AlarmManager initialized - app will auto-restart every 5 min if closed');
-  await BackgroundSyncService.initialize(); // WorkManager for background tasks
-  print('✅ WorkManager initialized - secondary keepalive mechanism');
+  
+  // ❌ DISABLED: WorkManager spawns new Flutter engine → interrupts BLE connection
+  // Cancel all existing WorkManager tasks (from previous app sessions)
+  await BackgroundSyncService.cancelAll();
+  print('🗑️  WorkManager tasks CANCELLED - SDK handles reconnection (Phase 1)');
+  
   await _testAlarmScheduling();
   await AppKeepaliveService.markAppActive();
 
   final authService = AuthService();
   final hc20Service = HC20Service();
+  // ✅ PHASE 1: Initialize HC20Service to set up SDK event listener
+  await hc20Service.initializeClient();
+  print('✅ [main.dart] HC20Service initialized with SDK event listener');
   await Future.delayed(const Duration(seconds: 1));
 
   // Initialize data management services
@@ -227,19 +236,19 @@ class SyncScheduler {
   final DateTime? Function() getLastRealtimeSync;
   final DateTime? Function() getLastHistorySync;
 
-  // Configurable sync intervals (in minutes) - AGGRESSIVE SYNC for testing
-  static const int realtimeInterval = 15;
-  static const int historyInterval = 60;
-  static const int reconnectInterval = 5;
+  // ✅ PHASE 2: Optimized sync intervals (battery savings)
+  // Realtime: 15→30min, History: 60→120min, Reconnect: removed (SDK handles)
+  static const int realtimeInterval = 30;
+  static const int historyInterval = 120;
 
   final Function onRealtimeSync;
   final Function onHistorySync;
-  final Function onReconnectScan;
+  // ❌ PHASE 2: Removed onReconnectScan (SDK handles reconnection)
 
   SyncScheduler({
     required this.onRealtimeSync,
     required this.onHistorySync,
-    required this.onReconnectScan,
+    // ❌ PHASE 2: Removed onReconnectScan parameter
     required this.getLastRealtimeSync,
     required this.getLastHistorySync,
   });
@@ -258,7 +267,7 @@ class SyncScheduler {
       print('🆕 [Scheduler] First sync ever - starting _tickCount from 0');
     }
     print(
-        '⏰ Starting Scheduler - Realtime: ${realtimeInterval}min, History: ${historyInterval}min, Reconnect: ${reconnectInterval}min');
+        '⏰ [Scheduler] Starting - Realtime: ${realtimeInterval}min, History: ${historyInterval}min (SDK handles reconnection)');
     _masterTimer = Timer.periodic(const Duration(minutes: 1), (timer) {
       _tickCount++;
       if (kDebugMode) print('⏰ [Scheduler] Tick #$_tickCount');
@@ -270,7 +279,7 @@ class SyncScheduler {
         print('📚 History sync triggered');
         onHistorySync();
       }
-      if (_tickCount % reconnectInterval == 0) onReconnectScan();
+      // ❌ PHASE 2: Removed reconnect scan (SDK handles reconnection)
     });
     print('✅ Unified Sync Scheduler started');
   }
@@ -297,13 +306,13 @@ class _HC20HomePageState extends State<HC20HomePage>
   Hc20Device? _connectedDevice;
   bool _isScanning = false;
   bool _isConnected = false;
-  ConnectionState _connectionState = ConnectionState.disconnected;
+  // ❌ PHASE 3: Removed _connectionState (UI commented out, setter-only)
   List<Hc20Device> _discoveredDevices = [];
-  String _statusMessage = 'Click "Start Scanning" to search for HC20 devices';
+  // ❌ PHASE 3: Removed _statusMessage (UI commented out, setter-only)
   bool _isBluetoothOn = true;
   StreamSubscription? _bluetoothStateSubscription;
-  String _lastTimeSyncStatus = 'Not synced yet';
-  DateTime? _lastTimeSyncTime;
+  // ❌ PHASE 3: Removed _lastTimeSyncStatus (unused)
+  // ❌ PHASE 3: Removed _lastTimeSyncTime (unused)
   int? _heartRate;
   int? _spo2;
   List<int>? _bloodPressure;
@@ -317,7 +326,7 @@ class _HC20HomePageState extends State<HC20HomePage>
   DateTime? _lastHistorySyncDate;
   String? _savedDeviceId;
   bool _isAutoReconnecting = false;
-  DateTime? _lastHrvRefresh;
+  // ✅ PHASE 5: Removed _lastHrvRefresh (never assigned, UI commented out)
   bool _isReconnecting = false;
   bool _isBatteryOptimizationDisabled = false;
   final ApiService _apiService = ApiService();
@@ -326,8 +335,8 @@ class _HC20HomePageState extends State<HC20HomePage>
   Map<String, int> _disconnectReasons = {};
   bool _isLowBattery = false;
   bool _lowBatteryAlertSent = false;
-  Timer? _internetMonitorTimer;
-  Timer? _autoReconnectScanner;
+  // ✅ PHASE 5: Removed _internetMonitorTimer (never started, only cancelled in dispose)
+  // ❌ PHASE 2: Removed _autoReconnectScanner (SDK handles reconnection)
   String? _deviceManufacturer;
   String? _deviceModel;
   String? _deviceOsVersion;
@@ -336,11 +345,19 @@ class _HC20HomePageState extends State<HC20HomePage>
       FlutterLocalNotificationsPlugin();
   bool _notificationsInitialized = false;
   final bool _bgPluginEnabled = false;
+  
+  // ✅ PHASE 1: SDK event subscription
+  StreamSubscription<HC20ConnectionEvent>? _sdkEventSubscription;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    
+    // ✅ PHASE 1: Setup SDK event listener first
+    Future.microtask(() {
+      _setupSdkEventListener();
+    });
 
     // Defer heavy initialization to avoid blocking main thread (fixes "App Not Responding")
     Future.microtask(() async {
@@ -386,7 +403,6 @@ class _HC20HomePageState extends State<HC20HomePage>
         connectionManager.setCallbacks(HC20ConnectionCallbacks(
           onStateChanged: (state, message) {
             setState(() {
-              _statusMessage = message;
               if (state == HC20ConnectionState.connected) {
                 _isConnected = true;
                 _isReconnecting = false;
@@ -405,7 +421,6 @@ class _HC20HomePageState extends State<HC20HomePage>
               _connectedDevice = device;
               _isConnected = true;
               _isReconnecting = false;
-              _connectionState = ConnectionState.connected;
             });
             print('✅ [Callback] Device connected: ${device.id}');
             _client ??= connectionManager.client;
@@ -456,25 +471,10 @@ class _HC20HomePageState extends State<HC20HomePage>
               _isConnected = false;
               _connectedDevice = null;
             });
-            if (reason == HC20DisconnectReason.manual) return;
-            DisconnectReason mappedReason;
-            switch (reason) {
-              case HC20DisconnectReason.bluetoothOff:
-              case HC20DisconnectReason.gattError:
-                mappedReason = DisconnectReason.bluetoothIssue;
-                break;
-              case HC20DisconnectReason.maxRetriesReached:
-              case HC20DisconnectReason.timeout:
-              case HC20DisconnectReason.deviceNotFound:
-                mappedReason = DisconnectReason.deviceNotFound;
-                break;
-              case HC20DisconnectReason.noInternet:
-                mappedReason = DisconnectReason.noInternet;
-                break;
-              default:
-                mappedReason = DisconnectReason.deviceNotFound;
-            }
-            _showDisconnectNotification(mappedReason);
+            
+            // ✅ REMOVED: Duplicate notification system - SDK event handler (_onDeviceDisconnected) now handles all notifications
+            // This prevents double notifications when same disconnect event triggers both systems
+            print('ℹ️ [Callback] Disconnect handled by SDK event system');
           },
           onDeviceForgotten: () async {
             // Reset sync timestamps when device is forgotten
@@ -495,6 +495,214 @@ class _HC20HomePageState extends State<HC20HomePage>
     });
   }
 
+  // ========================================
+  // ✅ PHASE 1: SDK EVENT LISTENER METHODS
+  // ========================================
+  
+  /// ✅ PHASE 1: Setup SDK event listener
+  void _setupSdkEventListener() {
+    try {
+      final hc20Service = Provider.of<HC20Service>(context, listen: false);
+      
+      _sdkEventSubscription = hc20Service.connectionEventStream.listen(
+        (HC20ConnectionEvent event) {
+          _handleSdkConnectionEvent(event);
+        },
+        onError: (error) {
+          print('⚠️ [main.dart] SDK event stream error: $error');
+        },
+      );
+      
+      print('✅ [main.dart] Listening to SDK connection events');
+    } catch (e) {
+      print('⚠️ [main.dart] Could not setup SDK event listener: $e');
+    }
+  }
+  
+  /// ✅ PHASE 1: Handle SDK connection events
+  Future<void> _handleSdkConnectionEvent(HC20ConnectionEvent event) async {
+    print('🔔 [main.dart] Received SDK event: ${event.type}');
+    
+    switch (event.type) {
+      case HC20ConnectionEventType.connected:
+        await _onDeviceConnected(event.device!);
+        break;
+        
+      case HC20ConnectionEventType.reconnected:
+        await _onDeviceReconnected(event.device!);
+        break;
+        
+      case HC20ConnectionEventType.disconnected:
+        await _onDeviceDisconnected(event.reason ?? 'Unknown');
+        break;
+    }
+  }
+  
+  /// ✅ PHASE 1: Handle connected event (initial connection)
+  Future<void> _onDeviceConnected(Hc20Device device) async {
+    print('✅ [main.dart] Device connected: ${device.name}');
+    
+    try {
+      // Update local state to reflect connection
+      if (mounted) {
+        setState(() {
+          _connectedDevice = device;
+          _isConnected = true;
+        });
+      }
+      
+      // 1. Sync time using HC20 client directly
+      final connectionManager = Provider.of<HC20ConnectionManager>(context, listen: false);
+      if (connectionManager.client != null) {
+        try {
+          final now = DateTime.now();
+          await connectionManager.client!.setTime(
+            device,
+            timestamp: now.millisecondsSinceEpoch ~/ 1000,
+            timezone: now.timeZoneOffset.inHours,
+          );
+          print('✅ [SDK Event] Time synced');
+        } catch (e) {
+          print('⚠️ [SDK Event] Time sync error: $e - continuing anyway');
+        }
+      }
+      
+      // 2. Associate with user (first time only)
+      if (!_isDeviceAssociated) {
+        await _associateDeviceWithUser(device);
+      }
+      
+      // 3. Start background services
+      final authService = Provider.of<AuthService>(context, listen: false);
+      await _startNativeBackgroundServices(device, authService.currentUser?.phone);
+      
+      // 4. Start sync scheduler (if not already running)
+      if (_syncScheduler == null) {
+        print('🔧 [SDK Event] Initializing new sync scheduler...');
+        _initializeSyncScheduler();
+      }
+      if (_syncScheduler != null && !_syncScheduler!.isRunning) {
+        _syncScheduler!.start();
+        print('✅ [SDK Event] Sync scheduler started');
+      }
+      
+      // 5. Perform initial syncs
+      await _performInitialSyncsIfNeeded();
+      
+      // 6. Show success notification
+      if (mounted) {
+        _showConnectionRestoredNotification();
+      }
+      
+      print('✅ [main.dart] Connection setup complete');
+    } catch (e) {
+      print('❌ [main.dart] Error in connection setup: $e');
+    }
+  }
+  
+  /// ✅ PHASE 1: Handle reconnected event (auto-reconnection)
+  Future<void> _onDeviceReconnected(Hc20Device device) async {
+    print('🔄 [main.dart] Device reconnected: ${device.name}');
+    
+    try {
+      // Update local state to reflect reconnection
+      if (mounted) {
+        setState(() {
+          _connectedDevice = device;
+          _isConnected = true;
+          _isReconnecting = false;
+        });
+      }
+      
+      // 1. Sync time (device might have drifted)
+      final connectionManager = Provider.of<HC20ConnectionManager>(context, listen: false);
+      if (connectionManager.client != null) {
+        try {
+          final now = DateTime.now();
+          await connectionManager.client!.setTime(
+            device,
+            timestamp: now.millisecondsSinceEpoch ~/ 1000,
+            timezone: now.timeZoneOffset.inHours,
+          );
+          print('✅ [SDK Event] Time synced after reconnection');
+        } catch (e) {
+          print('⚠️ [SDK Event] Time sync error: $e - continuing anyway');
+        }
+      }
+      
+      // 2. Resume sync scheduler (if stopped)
+      if (_syncScheduler != null && !_syncScheduler!.isRunning) {
+        _syncScheduler!.start();
+        print('✅ [SDK Event] Sync scheduler resumed');
+      }
+      
+      // 3. Request fresh data
+      await _handleRealtimeSync(forceRefresh: true);
+      
+      // 4. Show "Connection restored" notification
+      if (mounted) {
+        _showConnectionRestoredNotification();
+      }
+      
+      print('✅ [main.dart] Reconnection setup complete');
+    } catch (e) {
+      print('❌ [main.dart] Error in reconnection setup: $e');
+    }
+  }
+  
+  /// ✅ PHASE 1: Handle disconnected event
+  Future<void> _onDeviceDisconnected(String reason) async {
+    print('❌ [main.dart] Device disconnected: $reason');
+    
+    try {
+      // Update local state to reflect disconnection
+      if (mounted) {
+        setState(() {
+          _isConnected = false;
+        });
+      }
+      
+      // 1. Stop sync scheduler (save battery)
+      if (_syncScheduler != null && _syncScheduler!.isRunning) {
+        _syncScheduler!.stop();
+        print('⏹️ [SDK Event] Sync scheduler stopped');
+      }
+      
+      // 2. Save sync timestamps
+      await _saveSyncTimestamps();
+      
+      // 3. Show disconnect notification with smart reason detection
+      // ✅ FIX: Use _getDisconnectReason() instead of hardcoded deviceNotFound
+      final disconnectReason = _getDisconnectReason();
+      print('🔍 [SDK Event] Detected disconnect reason: $disconnectReason');
+      
+      // Convert HCWidgets.DisconnectReason to main.dart DisconnectReason
+      DisconnectReason notificationReason;
+      switch (disconnectReason) {
+        case HCWidgets.DisconnectReason.bluetoothOff:
+          notificationReason = DisconnectReason.bluetoothIssue;
+          print('📢 [SDK Event] Notification reason: Bluetooth Issue');
+          break;
+        case HCWidgets.DisconnectReason.oauthServerDown:
+        case HCWidgets.DisconnectReason.networkError:
+          notificationReason = DisconnectReason.noInternet;
+          print('📢 [SDK Event] Notification reason: No Internet');
+          break;
+        case HCWidgets.DisconnectReason.deviceOffline:
+          notificationReason = DisconnectReason.deviceNotFound;
+          print('📢 [SDK Event] Notification reason: Device Not Found');
+          break;
+      }
+      
+      await _showDisconnectNotification(notificationReason);
+      
+      // 4. SDK will auto-reconnect (no action needed)
+      print('⏳ SDK will attempt auto-reconnect...');
+    } catch (e) {
+      print('❌ [main.dart] Error in disconnection handling: $e');
+    }
+  }
+
   Future<void> _loadSavedDevice() async {
     try {
       final deviceId = await StorageService().getSavedDeviceId();
@@ -502,9 +710,36 @@ class _HC20HomePageState extends State<HC20HomePage>
         setState(() {
           _savedDeviceId = deviceId;
         });
-        print(
-            '🔄 [Startup] Saved device found: $deviceId, starting auto-reconnect...');
-        _startAutoReconnectScanner();
+        print('🔄 [Startup] Saved device found: $deviceId');
+        
+        // ✅ FIX: Trigger immediate reconnection if device not connected
+        // Wait for widget tree to be ready, then check connection state
+        Future.delayed(const Duration(milliseconds: 500), () async {
+          if (!mounted) return;
+          
+          final hc20Service = Provider.of<HC20Service>(context, listen: false);
+          final connectionManager = Provider.of<HC20ConnectionManager>(context, listen: false);
+          
+          // Check if device is already connected
+          if (hc20Service.isConnected) {
+            print('✅ [Startup] Device already connected - no action needed');
+            return;
+          }
+          
+          print('🚀 [Startup] Device not connected - triggering auto-reconnect...');
+          
+          // Trigger reconnection using connection manager (same as manual reconnect button)
+          try {
+            final device = await connectionManager.scanForSavedDevice();
+            if (device != null) {
+              print('✅ [Startup] Auto-reconnect initiated successfully');
+            } else {
+              print('⚠️ [Startup] Auto-reconnect failed - device not found');
+            }
+          } catch (e) {
+            print('❌ [Startup] Auto-reconnect error: $e');
+          }
+        });
       } else {
         print('ℹ️ [Startup] No saved device - first time setup required');
       }
@@ -549,50 +784,83 @@ class _HC20HomePageState extends State<HC20HomePage>
   }
 
   Future<void> _initializeNotifications() async {
+    print('🔔 [Notification Init] Starting notification initialization...');
     try {
+      print('🔔 [Notification Init] Creating Android settings...');
       const androidSettings =
           AndroidInitializationSettings('@mipmap/ic_launcher');
+      
+      print('🔔 [Notification Init] Creating iOS settings...');
       const iosSettings = DarwinInitializationSettings(
           requestAlertPermission: true,
           requestBadgePermission: true,
           requestSoundPermission: true);
+      
+      print('🔔 [Notification Init] Creating initialization settings...');
       const initSettings =
           InitializationSettings(android: androidSettings, iOS: iosSettings);
+      
+      print('🔔 [Notification Init] Initializing notification plugin...');
       await _notificationsPlugin.initialize(initSettings,
           onDidReceiveNotificationResponse: (response) {
-        print('📱 Notification tapped: ${response.payload}');
+        print('📱 [Notification] User tapped notification: ${response.payload}');
       });
+      print('✅ [Notification Init] Plugin initialized successfully');
+      
       if (Platform.isAndroid) {
-        await _notificationsPlugin
+        print('🔔 [Notification Init] Requesting Android notification permission...');
+        final permissionGranted = await _notificationsPlugin
             .resolvePlatformSpecificImplementation<
                 AndroidFlutterLocalNotificationsPlugin>()
             ?.requestNotificationsPermission();
+        print('🔔 [Notification Init] Permission granted: ${permissionGranted ?? "unknown"}');
       }
+      
       setState(() {
         _notificationsInitialized = true;
       });
-      print('✅ Notifications initialized');
+      print('✅ [Notification Init] Notifications fully initialized and ready to use');
     } catch (e) {
-      print('⚠️ Error initializing notifications: $e');
+      print('❌ [Notification Init] Error initializing notifications: $e');
+      setState(() {
+        _notificationsInitialized = false;
+      });
     }
   }
 
   Future<void> _showDisconnectNotification(DisconnectReason reason) async {
-    if (!_notificationsInitialized) return;
+    print('🔔 [Disconnect Notification] Request to show notification for reason: ${reason.name}');
+    
+    if (!_notificationsInitialized) {
+      print('⚠️ [Disconnect Notification] Notifications NOT initialized - skipping');
+      return;
+    }
+    
     final message = getDisconnectMessage(reason);
-    print('🔔 [Notification] $message');
+    print('🔔 [Disconnect Notification] Message: $message');
+    
     final now = DateTime.now();
     final lastNotificationKey = 'last_notification_${reason.name}';
     final prefs = await SharedPreferences.getInstance();
     final lastNotificationStr = prefs.getString(lastNotificationKey);
+    
     if (lastNotificationStr != null) {
       final lastNotification = DateTime.parse(lastNotificationStr);
-      if (now.difference(lastNotification).inMinutes < 5) {
-        print('⏭️ [Notification] Skipping - spam prevention');
+      final timeSinceLastNotification = now.difference(lastNotification);
+      print('🔔 [Disconnect Notification] Last notification for ${reason.name}: ${timeSinceLastNotification.inMinutes} minutes ago');
+      
+      if (timeSinceLastNotification.inMinutes < 5) {
+        print('⏭️ [Disconnect Notification] SKIPPING - spam prevention (5-min cooldown)');
         return;
       }
+    } else {
+      print('🔔 [Disconnect Notification] First time showing ${reason.name} notification');
     }
+    
     await prefs.setString(lastNotificationKey, now.toIso8601String());
+    print('🔔 [Disconnect Notification] Saved timestamp for spam prevention');
+    
+    print('🔔 [Disconnect Notification] Creating notification details...');
     const androidDetails = AndroidNotificationDetails(
         'device_alerts', 'Device Alerts',
         channelDescription: 'Notifications for device connection issues',
@@ -607,18 +875,37 @@ class _HC20HomePageState extends State<HC20HomePage>
         presentAlert: true, presentBadge: true, presentSound: true);
     const notificationDetails =
         NotificationDetails(android: androidDetails, iOS: iosDetails);
-    await _notificationsPlugin.show(reason.index + 1000,
+    
+    final notificationId = reason.index + 1000;
+    print('🔔 [Disconnect Notification] Showing notification with ID: $notificationId');
+    
+    await _notificationsPlugin.show(notificationId,
         'HC20 Connection Alert', message, notificationDetails,
         payload: reason.name);
-    print('📬 Disconnect notification shown: $message');
+    
+    print('✅ [Disconnect Notification] Notification shown successfully!');
+    print('   - ID: $notificationId');
+    print('   - Reason: ${reason.name}');
+    print('   - Message: $message');
 
     setState(() {
-      _statusMessage = message;
     });
   }
 
   Future<void> _showLowBatteryNotification(int batteryLevel) async {
-    if (!_notificationsInitialized) return;
+    print('🔔 [Low Battery Notification] Request to show notification for battery: $batteryLevel%');
+    
+    if (!_notificationsInitialized) {
+      print('⚠️ [Low Battery Notification] Notifications NOT initialized - skipping');
+      return;
+    }
+    
+    if (_lowBatteryAlertSent) {
+      print('⏭️ [Low Battery Notification] SKIPPING - already sent this session');
+      return;
+    }
+    
+    print('🔔 [Low Battery Notification] Creating notification details...');
     const androidDetails = AndroidNotificationDetails(
         'battery_alerts', 'Battery Alerts',
         channelDescription: 'Notifications for low device battery',
@@ -633,24 +920,44 @@ class _HC20HomePageState extends State<HC20HomePage>
         presentAlert: true, presentBadge: true, presentSound: true);
     const notificationDetails =
         NotificationDetails(android: androidDetails, iOS: iosDetails);
+    
+    final message = 'HC20 device battery is at $batteryLevel%. Please charge your device soon.';
+    print('🔔 [Low Battery Notification] Showing notification with ID: 4');
+    
     await _notificationsPlugin.show(
         4,
         '🔋 Low Battery Warning',
-        'HC20 device battery is at $batteryLevel%. Please charge your device soon.',
+        message,
         notificationDetails,
         payload: 'low_battery:$batteryLevel');
-    print('📬 Low battery notification shown: $batteryLevel%');
+    
+    print('✅ [Low Battery Notification] Notification shown successfully!');
+    print('   - ID: 4');
+    print('   - Battery Level: $batteryLevel%');
+    print('   - Message: $message');
   }
 
   Future<void> _showConnectionRestoredNotification() async {
-    if (!_notificationsInitialized) return;
+    print('🔔 [Connection Restored] Request to clear all notifications');
+    
+    if (!_notificationsInitialized) {
+      print('⚠️ [Connection Restored] Notifications NOT initialized - skipping');
+      return;
+    }
+    
+    print('🔔 [Connection Restored] Cancelling all active notifications...');
     await _cancelAllNotifications();
     await Future.delayed(const Duration(milliseconds: 100));
-    print('📬 All notifications cancelled on connection restored');
+    
+    print('✅ [Connection Restored] All notifications cancelled successfully!');
+    print('   - Disconnect notifications cleared');
+    print('   - Low battery notification cleared (if shown)');
   }
 
   Future<void> _cancelAllNotifications() async {
+    print('🗑️ [Cancel Notifications] Cancelling all notifications...');
     await _notificationsPlugin.cancelAll();
+    print('✅ [Cancel Notifications] All notifications cancelled');
   }
 
   Future<void> _enableBackgroundExecution() async {
@@ -674,13 +981,11 @@ class _HC20HomePageState extends State<HC20HomePage>
       if (isDisabled) {
         print('✅ Battery optimization already disabled');
         setState(() {
-          _statusMessage = '✅ Ready to scan for devices';
         });
       } else {
         print(
             '⚠️ Battery optimization is enabled - showing permission dialog...');
         setState(() {
-          _statusMessage = '⚠️ Battery optimization permission required';
         });
 
         Future.delayed(Duration(milliseconds: 500), () {
@@ -776,7 +1081,6 @@ class _HC20HomePageState extends State<HC20HomePage>
       print('🔋 Opening battery optimization settings...');
       await platform.invokeMethod('requestBatteryOptimizationExemption');
       setState(() {
-        _statusMessage = 'Please disable battery optimization for this app';
       });
       await Future.delayed(Duration(seconds: 3));
       await _checkBatteryOptimizationStatus();
@@ -792,9 +1096,7 @@ class _HC20HomePageState extends State<HC20HomePage>
           await platform.invokeMethod('isBatteryOptimizationDisabled');
       setState(() {
         _isBatteryOptimizationDisabled = isDisabled;
-        _statusMessage = isDisabled
-            ? '✅ Ready to scan for devices'
-            : '⚠️ Battery optimization must be disabled. Tap "Disable Battery Optimization" button.';
+        // ❌ PHASE 3: Removed _statusMessage assignment (UI commented out)
       });
       print(_isBatteryOptimizationDisabled
           ? '✅ Battery optimization disabled'
@@ -824,8 +1126,6 @@ class _HC20HomePageState extends State<HC20HomePage>
           print('❌ Bluetooth OFF while connected - handling disconnection');
           setState(() {
             _isConnected = false;
-            _connectionState = ConnectionState.error;
-            _statusMessage = 'Bluetooth turned off';
           });
           await _handleDisconnection();
         }
@@ -846,9 +1146,10 @@ class _HC20HomePageState extends State<HC20HomePage>
     _saveSyncTimestamps();
     _syncScheduler?.stop();
     print('🛑 [Disconnect] Stopping sync scheduler by dispose');
+    _sdkEventSubscription?.cancel(); // ✅ PHASE 1: Cancel SDK event listener
     _realtimeSubscription?.cancel();
-    _internetMonitorTimer?.cancel();
-    _autoReconnectScanner?.cancel();
+    // ✅ PHASE 5: Removed _internetMonitorTimer?.cancel() (timer was never started)
+    // ❌ PHASE 2: Removed _autoReconnectScanner (SDK handles reconnection)
     _bluetoothStateSubscription?.cancel();
     _disableBackgroundExecution();
     super.dispose();
@@ -883,12 +1184,10 @@ class _HC20HomePageState extends State<HC20HomePage>
             _savedDeviceId != null &&
             _savedDeviceId!.isNotEmpty) {
           print(
-              '🔍 [Resume] Device disconnected, ensuring auto-reconnect scanner is active...');
+              '⏳ [Resume] Device disconnected - SDK will auto-reconnect...');
           _isReconnecting = false;
           _isAutoReconnecting = false;
-          final connectionManager =
-              Provider.of<HC20ConnectionManager>(context, listen: false);
-          if (!connectionManager.isCleaningUp) _startAutoReconnectScanner();
+          // No manual scanner needed - SDK handles reconnection automatically
         }
 
         Future.delayed(Duration(seconds: 1), () {
@@ -1032,7 +1331,7 @@ class _HC20HomePageState extends State<HC20HomePage>
     _syncScheduler = SyncScheduler(
       onRealtimeSync: _handleRealtimeSync,
       onHistorySync: _handleHistorySync,
-      onReconnectScan: _handleReconnectScan,
+      // ❌ PHASE 2: Removed onReconnectScan (SDK handles reconnection)
       getLastRealtimeSync: () => _lastRealtimeSync,
       getLastHistorySync: () => _lastHistorySync,
     );
@@ -1330,23 +1629,13 @@ class _HC20HomePageState extends State<HC20HomePage>
     }
   }
 
-  void _handleReconnectScan() {
-    final connectionManager =
-        Provider.of<HC20ConnectionManager>(context, listen: false);
-    if (_isConnected ||
-        _savedDeviceId == null ||
-        connectionManager.isCleaningUp) return;
-    if (kDebugMode)
-      print('🔍 [ReconnectScan] Attempting to reconnect to saved device...');
-    _scanForSavedDevice();
-  }
+  // ❌ PHASE 2: Deleted _handleReconnectScan() - SDK handles reconnection
 
   void _startScanning() async {
     if (!_isBatteryOptimizationDisabled) {
       await _checkBatteryOptimizationStatus();
       if (!_isBatteryOptimizationDisabled) {
         setState(() {
-          _statusMessage =
               '❌ Cannot scan: Battery optimization must be disabled first!';
         });
         showDialog(
@@ -1376,7 +1665,6 @@ class _HC20HomePageState extends State<HC20HomePage>
     setState(() {
       _isScanning = true;
       _discoveredDevices.clear();
-      _statusMessage = 'Scanning for HC20 devices...';
     });
     
     // Show scanning SnackBar
@@ -1498,7 +1786,6 @@ class _HC20HomePageState extends State<HC20HomePage>
       setState(() {
         _connectedDevice = connectionManager.connectedDevice;
         _isConnected = true;
-        _connectionState = ConnectionState.connected;
       });
       try {
         final hc20Service = Provider.of<HC20Service>(context, listen: false);
@@ -1603,7 +1890,6 @@ class _HC20HomePageState extends State<HC20HomePage>
       }
       print('🔗 Associating device ${device.id} with user ${user.id}');
       setState(() {
-        _statusMessage = 'Linking device to your account...';
       });
       final response = await _apiService.associateDevice(device.id, user.id,
           deviceName: device.name);
@@ -1612,7 +1898,6 @@ class _HC20HomePageState extends State<HC20HomePage>
             '✅ Device associated successfully! Updated ${response['updatedRecords']} records');
         setState(() {
           _isDeviceAssociated = true;
-          _statusMessage =
               'Device linked! Updated ${response['updatedRecords']} health records';
         });
         if (mounted) {
@@ -1684,8 +1969,6 @@ class _HC20HomePageState extends State<HC20HomePage>
     await _saveSyncTimestamps();
     setState(() {
       _isConnected = false;
-      _connectionState = ConnectionState.reconnecting;
-      _statusMessage = 'Connection lost. Attempting to reconnect...';
     });
     try {
       final hc20Service = Provider.of<HC20Service>(context, listen: false);
@@ -1708,34 +1991,12 @@ class _HC20HomePageState extends State<HC20HomePage>
     setState(() {
       _isConnected = connectionManager.isConnected;
       _isReconnecting = connectionManager.isReconnecting;
-      _statusMessage = connectionManager.statusMessage;
-      if (connectionManager.isConnected)
-        _connectionState = ConnectionState.connected;
-      else if (connectionManager.isReconnecting)
-        _connectionState = ConnectionState.reconnecting;
-      else
-        _connectionState = ConnectionState.disconnected;
+      // ❌ PHASE 3: Removed _connectionState and _statusMessage assignments (UI commented out)
     });
   }
 
-  void _sendStressWebhook() {
-    if (_connectedDevice == null || !_isConnected || _client == null) {
-      print('⚠️ Cannot send stress webhook - no device connected');
-      setState(() {
-        _statusMessage = 'No device connected';
-      });
-      return;
-    }
-    print(
-        '\n🚨 STRESS BUTTON PRESSED - Requesting IMMEDIATE fresh data from device...\n');
-    setState(() {
-      _statusMessage = 'Requesting fresh data...';
-    });
-    _client!
-        .realtimeV2(_connectedDevice!)
-        .listen((_) {}, onError: (_) {})
-        .cancel();
-  }
+  // ✅ PHASE 5: Removed _sendStressWebhook() method (unreferenced, broken logic)
+  // Was intended for "stress button" feature that was never implemented
 
   Future<void> _sendDataToWebhook(Hc20Device device, Hc20RealtimeV2 data,
       {bool isStressAlert = false}) async {
@@ -1861,19 +2122,16 @@ class _HC20HomePageState extends State<HC20HomePage>
   Future<void> _manualReconnect() async {
     if (_savedDeviceId == null || _savedDeviceId!.isEmpty) {
       setState(() {
-        _statusMessage = '⚠️ No saved device. Please scan and connect first.';
       });
       return;
     }
     if (_isConnected) {
       setState(() {
-        _statusMessage = 'Already connected to device';
       });
       return;
     }
     if (_isAutoReconnecting || _isReconnecting) {
       setState(() {
-        _statusMessage = 'Reconnection already in progress...';
       });
       return;
     }
@@ -1882,10 +2140,79 @@ class _HC20HomePageState extends State<HC20HomePage>
         Provider.of<HC20ConnectionManager>(context, listen: false);
     connectionManager.resetReconnectAttempts();
     setState(() {
-      _connectionState = ConnectionState.connecting;
-      _statusMessage = 'Manual reconnect: Scanning for device...';
     });
-    await _scanForSavedDevice();
+    // ✅ PHASE 2: Use connection manager's scan (SDK will handle actual reconnection)
+    final device = await connectionManager.scanForSavedDevice();
+    if (device == null && mounted) {
+      setState(() {
+        _isReconnecting = false;
+      });
+    }
+  }
+
+  // ✅ NEW: Smart disconnect reason detection
+  HCWidgets.DisconnectReason _getDisconnectReason() {
+    final hc20Service = Provider.of<HC20Service>(context, listen: false);
+    
+    // ✅ Priority 1: Bluetooth OFF (ABSOLUTE highest - overrides everything)
+    // Check this FIRST before any other conditions
+    try {
+      final bleStatus = hc20Service.ble.status;
+      if (bleStatus == BleStatus.poweredOff) {
+        print('🔍 [DEBUG] Bluetooth is OFF - returning bluetoothOff reason');
+        return HCWidgets.DisconnectReason.bluetoothOff;
+      }
+    } catch (e) {
+      print('⚠️ [DEBUG] Could not check BLE status: $e');
+    }
+    
+    // ✅ Priority 2: Device Offline (BLE not connected)
+    // If BT is ON but device not connected, check if it's an OAuth issue or device issue
+    if (!hc20Service.isConnected) {
+      // If we have recent OAuth errors, those take priority over generic device offline
+      if (hc20Service.hasRecentOAuthError || hc20Service.isOAuthServerDown) {
+        print('🔍 [DEBUG] Device offline + OAuth error - checking OAuth reason');
+        // Will be handled in Priority 3/4 below
+      } else {
+        // Pure device offline (no OAuth issues)
+        print('🔍 [DEBUG] Device offline (no OAuth errors) - returning deviceOffline');
+        return HCWidgets.DisconnectReason.deviceOffline;
+      }
+    }
+    
+    // ✅ Priority 3: Recent OAuth Error (within 30s - network/server issues)
+    if (hc20Service.hasRecentOAuthError) {
+      final error = hc20Service.lastOAuthError ?? '';
+      
+      // Check for server errors (500, Server error)
+      if (error.contains('500') || error.contains('Server error')) {
+        print('🔍 [DEBUG] Recent OAuth 500 error - returning oauthServerDown');
+        return HCWidgets.DisconnectReason.oauthServerDown;
+      }
+      
+      // Check for network errors (DNS, socket, timeout)
+      if (error.contains('Failed host lookup') || 
+          error.contains('SocketException') ||
+          error.contains('timeout') ||
+          error.contains('connection')) {
+        print('🔍 [DEBUG] Recent network error - returning networkError');
+        return HCWidgets.DisconnectReason.networkError;
+      }
+      
+      // Generic OAuth error (default to server down)
+      print('🔍 [DEBUG] Recent generic OAuth error - returning oauthServerDown');
+      return HCWidgets.DisconnectReason.oauthServerDown;
+    }
+    
+    // ✅ Priority 4: Circuit Breaker (prolonged OAuth failure)
+    if (hc20Service.isOAuthServerDown) {
+      print('🔍 [DEBUG] Circuit breaker triggered - returning oauthServerDown');
+      return HCWidgets.DisconnectReason.oauthServerDown;
+    }
+    
+    // ✅ Fallback: Device Offline (default state)
+    print('🔍 [DEBUG] Fallback - returning deviceOffline');
+    return HCWidgets.DisconnectReason.deviceOffline;
   }
 
   Future<void> _manualCloudSync() async {
@@ -1992,10 +2319,7 @@ class _HC20HomePageState extends State<HC20HomePage>
       if (mounted) {
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
         if (success) {
-          setState(() {
-            _lastTimeSyncStatus = '✅ Time synced successfully';
-            _lastTimeSyncTime = DateTime.now();
-          });
+          // ❌ PHASE 3: Removed _lastTimeSyncStatus and _lastTimeSyncTime (unused)
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
               content: Text('✅ Clock Sync Complete!'),
               backgroundColor: Colors.green,
@@ -2020,71 +2344,9 @@ class _HC20HomePageState extends State<HC20HomePage>
     }
   }
 
-  void _startAutoReconnectScanner() {
-    if (_savedDeviceId == null || _savedDeviceId!.isEmpty) {
-      print('ℹ️  [Auto-Reconnect] No saved device - scheduler not needed');
-      return;
-    }
-    if (_syncScheduler == null || !_syncScheduler!.isRunning) {
-      print(
-          '🔧 [Auto-Reconnect] Initializing scheduler for reconnect scans...');
-      _initializeSyncScheduler();
-      _syncScheduler?.start();
-      print(
-          '✅ [Auto-Reconnect] Scheduler started - will scan every ${SyncScheduler.reconnectInterval} minutes');
-    } else {
-      print(
-          '✅ [Auto-Reconnect] Scheduler already running - reconnect scans active');
-    }
-    Future.delayed(const Duration(seconds: 2), () {
-      final connectionManager =
-          Provider.of<HC20ConnectionManager>(context, listen: false);
-      if (!_isConnected &&
-          !_isAutoReconnecting &&
-          !_isReconnecting &&
-          !connectionManager.isCleaningUp) {
-        print(
-            '🔍 [Auto-Reconnect] Starting immediate scan for saved device...');
-        _scanForSavedDevice();
-      }
-    });
-  }
+  // ❌ PHASE 2: Deleted _startAutoReconnectScanner() - SDK handles reconnection
 
-  Future<void> _scanForSavedDevice() async {
-    final connectionManager =
-        Provider.of<HC20ConnectionManager>(context, listen: false);
-    if (connectionManager.isCleaningUp ||
-        connectionManager.isConnected ||
-        connectionManager.isReconnecting) {
-      print('⚠️ [Auto-Reconnect] Skipping scan - manager busy');
-      return;
-    }
-    setState(() {
-      _isReconnecting = true;
-      _statusMessage = 'Scanning for saved device...';
-    });
-    final device = await connectionManager.scanForSavedDevice();
-    if (device == null && mounted) {
-      setState(() {
-        _isReconnecting = false;
-        _statusMessage = 'Device not found. Will retry...';
-      });
-
-      // Schedule next alarm dynamically: now + reconnectInterval + 1 min
-      print('📅 [Reconnect] ========== SCHEDULING NEXT ALARM ==========');
-      print(
-          '📅 [Reconnect] Device DISCONNECTED - scheduling after_reconnect_fail');
-      print(
-          '📅 [Reconnect] reconnectInterval: ${SyncScheduler.reconnectInterval} min');
-      print(
-          '📅 [Reconnect] Alarm delay: ${SyncScheduler.reconnectInterval + 1} min');
-      await AppKeepaliveService.scheduleNextAlarm(
-        delayMinutes: SyncScheduler.reconnectInterval + 1,
-        reason: 'after_reconnect_fail',
-      );
-      print('📅 [Reconnect] ==========================================');
-    }
-  }
+  // ❌ PHASE 2: Deleted _scanForSavedDevice() - SDK handles reconnection
 
   Future<void> _disconnect() async {
     final connectionManager =
@@ -2092,8 +2354,6 @@ class _HC20HomePageState extends State<HC20HomePage>
     await connectionManager.disconnect();
     setState(() {
       _isConnected = false;
-      _connectionState = ConnectionState.disconnected;
-      _statusMessage = 'Disconnected';
       _isReconnecting = false;
       _lastDataReceived = null;
       _heartRate = null;
@@ -2206,12 +2466,12 @@ class _HC20HomePageState extends State<HC20HomePage>
           // ),
           // const SizedBox(height: 16),
           if (_isLowBattery && _batteryLevel != null) ...[
-            LowBatteryWarning(batteryLevel: _batteryLevel!),
+            HCWidgets.LowBatteryWarning(batteryLevel: _batteryLevel!),
             const SizedBox(height: 16)
           ],
           // Hero Section - shown when no device is set up yet
           if (!_isConnected && _savedDeviceId == null) ...[
-            HeroSection(
+            HCWidgets.HeroSection(
               onSetupDevice: _startScanning,
               discoveredDevices: _discoveredDevices,
               isScanning: _isScanning,
@@ -2220,16 +2480,21 @@ class _HC20HomePageState extends State<HC20HomePage>
             const SizedBox(height: 16)
           ],
           if (!_isConnected && _savedDeviceId != null) ...[
-            ManualReconnectButton(
-                onPressed: _manualReconnect, 
-                isReconnecting: _isReconnecting,
-                minutesUntilAutoReconnect: _syncScheduler != null && _syncScheduler!.isRunning
-                    ? SyncScheduler.reconnectInterval - (_syncScheduler!.tickCount % SyncScheduler.reconnectInterval)
-                    : SyncScheduler.reconnectInterval),
+            Consumer<HC20Service>(
+              builder: (context, hc20Service, child) {
+                return HCWidgets.ManualReconnectButton(
+                  onPressed: _manualReconnect, 
+                  isReconnecting: _isReconnecting,
+                  // ❌ PHASE 2: Removed minutesUntilAutoReconnect (SDK handles timing)
+                  minutesUntilAutoReconnect: null,
+                  reason: _getDisconnectReason(), // ✅ Rebuilds when HC20Service changes
+                );
+              },
+            ),
             const SizedBox(height: 8)
           ],
           if (!_isBatteryOptimizationDisabled) ...[
-            BatteryOptimizationWarning(
+            HCWidgets.BatteryOptimizationWarning(
                 isDisabled: _isBatteryOptimizationDisabled,
                 onDisable: _requestBatteryOptimizationExemption),
             const SizedBox(height: 16)
@@ -2612,7 +2877,7 @@ class _HC20HomePageState extends State<HC20HomePage>
             ]),
           ),
           const SizedBox(height: 16),
-          AccountDeviceSection(
+          HCWidgets.AccountDeviceSection(
             accountName: user?.name ?? 'Not logged in',
             deviceName: _connectedDevice?.name ?? 'HC20 Wearable',
             deviceId: _savedDeviceId,

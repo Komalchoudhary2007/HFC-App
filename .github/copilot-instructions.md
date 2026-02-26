@@ -27,7 +27,7 @@ AlarmManager (5-min keepalive) + WorkManager (15-min backup)
     ↓
 Main Engine Keep-Alive (MainEngineKeepAliveService)
     ↓
-Webhooks every 5 min (aligned to :00, :05, :10, etc.)
+Webhooks every 5 min
 ```
 
 **Data Flow**:
@@ -267,6 +267,8 @@ final response = await apiService.associateDevice(
 - **HC20 SDK**: `/hc20_1.0.4/README.md`
 - **Setup**: `SETUP_CHECKLIST.md`
 - **Build guide**: `README.md` (wireless ADB pairing steps)
+- **Update**: `CODE_CHANGES_MASTER_LOG.md`
+- **Issue tracking**: `KNOWN_ISSUES_TRACKER.md`
 
 ## Color Scheme
 Primary: `#532A7B` (purple)  
@@ -283,3 +285,29 @@ When unclear about implementation, ask:
 3. Is this a debug feature or production requirement?
 4. Should OAuth credentials come from environment variables?
 5. Does this need to be synced to backend API?
+
+
+## Code Modification Rules (CRITICAL)
+
+**Before changing ANY code:**
+1. Search chat history for file/function context
+2. Check if code has `// FIX #` or `// CRITICAL:` comments
+3. If found → **ASK USER** before modifying
+4. Strategic files (see list below) → **REQUIRE APPROVAL**
+5. After change → Update `CODE_CHANGES_MASTER_LOG.md`
+
+**Strategic Files (Ask Before Changing)**:
+- `lib/main.dart`, `lib/services/hc20_service.dart`
+- `android/.../ForegroundService.kt`
+- Files listed in `docs/CODE_CHANGES_MASTER_LOG.md`
+
+**Protected Code Patterns**:
+- `@pragma('vm:entry-point')` → DO NOT REMOVE
+- `// ✅ FIX #XXX:` comments → DO NOT DELETE
+- OAuth 3-tier logic → DO NOT SIMPLIFY
+- Device persistence (`_savedDeviceId`) → DO NOT CLEAR (except `forgetDevice()`)
+
+**When Uncertain**: Show existing code, ask which approach:
+A) Preserve (safe), B) Modify (risky), C) Hybrid solution
+
+---

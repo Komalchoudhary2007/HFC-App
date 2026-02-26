@@ -22,25 +22,28 @@ class AppKeepaliveService {
   /// Save sync intervals to SharedPreferences so native code can read them
   /// Call this when app starts or when intervals change
   /// @param realtimeInterval - realtime sync interval in minutes
-  /// @param reconnectInterval - reconnect attempt interval in minutes
+  /// @param reconnectInterval - DEPRECATED: SDK handles reconnection (kept for backward compatibility)
   @pragma('vm:entry-point')
   static Future<void> saveIntervalsToNative({
     required int realtimeInterval,
-    required int reconnectInterval,
+    int? reconnectInterval, // ❌ PHASE 2: Made optional (deprecated)
   }) async {
     try {
       print('🔧 [AppKeepalive] ========== SAVING INTERVALS TO NATIVE ==========');
       print('🔧 [AppKeepalive] realtimeInterval: $realtimeInterval min');
-      print('🔧 [AppKeepalive] reconnectInterval: $reconnectInterval min');
+      if (reconnectInterval != null) {
+        print('🔧 [AppKeepalive] reconnectInterval: $reconnectInterval min (DEPRECATED - SDK handles)');
+      }
       
       final prefs = await SharedPreferences.getInstance();
       await prefs.setInt('realtime_interval_minutes', realtimeInterval);
-      await prefs.setInt('reconnect_interval_minutes', reconnectInterval);
+      if (reconnectInterval != null) {
+        await prefs.setInt('reconnect_interval_minutes', reconnectInterval);
+      }
       
       // Verify saved values
       final savedRealtime = prefs.getInt('realtime_interval_minutes');
-      final savedReconnect = prefs.getInt('reconnect_interval_minutes');
-      print('🔧 [AppKeepalive] Verified saved values - realtime: $savedRealtime, reconnect: $savedReconnect');
+      print('🔧 [AppKeepalive] Verified saved values - realtime: $savedRealtime');
       print('✅ [AppKeepalive] Intervals saved successfully!');
       print('🔧 [AppKeepalive] ================================================');
     } catch (e) {

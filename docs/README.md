@@ -1,27 +1,169 @@
-# HFC-Nitto Wearable App Documentation
+# HFC App Documentation
 
-Complete documentation for the HFC-Nitto stress management system for special needs parents.
+**Last Updated**: Feb 16, 2026  
+**Project**: HC20 Wearable Health Monitoring App
 
-## 📚 Documentation Index
+Complete documentation for the HFC stress management system for special needs parents with HC20 wearable integration.
 
-### Start Here First! 👇
-1. **[QUICK_START.md](./QUICK_START.md)** - **READ THIS FIRST!**
-   - Architecture overview
-   - Why backend-heavy approach is correct
-   - Development phases summary
-   - Immediate next steps
+---
 
-### Complete Implementation Guides
-2. **[DEVELOPMENT_ROADMAP.md](./DEVELOPMENT_ROADMAP.md)** - Detailed 11-week development plan
-3. **[API_DOCUMENTATION.md](./API_DOCUMENTATION.md)** - Complete REST API reference
-4. **[MOBILE_APP_GUIDE.md](./MOBILE_APP_GUIDE.md)** - Step-by-step Flutter implementation
-5. **[POC_IMPLEMENTATION.md](./POC_IMPLEMENTATION.md)** - POC-specific requirements
+## 📚 DOCUMENTATION STRUCTURE
+
+This documentation is organized into **8 main categories** for easy navigation:
+
+```
+docs/
+├── 00-START-HERE/              ⭐ Read these first!
+├── 01-Analysis/                🔍 Root cause analysis & deep dives
+├── 02-Implementation-History/  📝 What we built & when
+├── 03-Architecture/            🏗️ System design & structure
+├── 04-Testing/                 🧪 Test guides & results
+├── 05-Setup-Guides/            ⚙️ Installation & configuration
+├── 06-Reference/               📖 Quick references & guides
+├── 07-Legacy/                  📦 Archived/historical docs
+└── logs/                       📊 Test logs & debug output
+```
+
+---
+
+## ⭐ START HERE (New Developers)
+
+### **00-START-HERE/** - Essential Documents
+
+| Document | Purpose | Read Time |
+|----------|---------|-----------|
+| **[README_DOCUMENTATION.md](./00-START-HERE/README_DOCUMENTATION.md)** | Complete navigation guide | 10 min |
+| **[CODE_CHANGES_MASTER_LOG.md](./00-START-HERE/CODE_CHANGES_MASTER_LOG.md)** | Change history with impact analysis | 20 min |
+| **[KNOWN_ISSUES_TRACKER.md](./00-START-HERE/KNOWN_ISSUES_TRACKER.md)** | Current bugs & improvements | 15 min |
+| **[DATA_CONSUMPTION_ANALYSIS.md](./00-START-HERE/DATA_CONSUMPTION_ANALYSIS.md)** | 🔥 Why app uses 26MB/day + fixes | 25 min |
+| **[PERFORMANCE_OPTIMIZATION_RECOMMENDATIONS.md](./00-START-HERE/PERFORMANCE_OPTIMIZATION_RECOMMENDATIONS.md)** | Speed improvements | 15 min |
+| **[SDK_CODE_MODIFICATIONS.md](./00-START-HERE/SDK_CODE_MODIFICATIONS.md)** | SDK changes (none currently) | 10 min |
+
+**For New Developers**: Read first 3 documents (~45 min total)
 
 ---
 
 ## 🎯 Project Overview
 
-This is a Flutter mobile application integrated with Nitto's HC20 wearable device for the **7-month Proof of Concept study** to help parents of special needs children manage stress through continuous monitoring and psychologist-led interventions.
+This is a Flutter mobile application integrated with HC20 wearable device for the **7-month Proof of Concept study** to help parents of special needs children manage stress through continuous monitoring and psychologist-led interventions.
+
+## 🔍 Quick Navigation by Task
+
+### I need to...
+
+**Understand what changed recently**  
+→ [CODE_CHANGES_MASTER_LOG.md](./00-START-HERE/CODE_CHANGES_MASTER_LOG.md)
+
+**Fix a bug**  
+→ [KNOWN_ISSUES_TRACKER.md](./00-START-HERE/KNOWN_ISSUES_TRACKER.md) → Pick top issue  
+→ [01-Analysis/](./01-Analysis/) → Find related analysis  
+
+**Make the app faster**  
+→ [PERFORMANCE_OPTIMIZATION_RECOMMENDATIONS.md](./00-START-HERE/PERFORMANCE_OPTIMIZATION_RECOMMENDATIONS.md)
+
+**Understand system architecture**  
+→ [BLE_CONNECTION_LIFECYCLE.md](./03-Architecture/BLE_CONNECTION_LIFECYCLE.md)  
+→ [HC20_CONNECTION_MANAGEMENT_EXPLAINED.md](./03-Architecture/HC20_CONNECTION_MANAGEMENT_EXPLAINED.md)
+
+**Test a feature**  
+→ [QUICK_TESTING_GUIDE.md](./04-Testing/QUICK_TESTING_GUIDE.md)  
+→ [RECONNECTION_FIXES_QUICK_TEST.md](./04-Testing/RECONNECTION_FIXES_QUICK_TEST.md)
+
+**Look up a method or pattern**  
+→ [MAIN_DART_METHODS_INVENTORY.md](./06-Reference/MAIN_DART_METHODS_INVENTORY.md)  
+→ [HC20_SDK_QUICK_REFERENCE.md](./06-Reference/HC20_SDK_QUICK_REFERENCE.md)
+
+**Setup development environment**  
+→ [05-Setup-Guides/](./05-Setup-Guides/)  
+→ [QUICK_START.md](./07-Legacy/done-implementation/QUICK_START.md)
+
+---
+
+## 📁 Folder Details
+
+### 00-START-HERE/ (5 files)
+Core strategic documents - start here for complete project understanding.
+
+### 01-Analysis/ (20 files)
+Deep technical analysis of reconnection issues, performance problems, and system behavior.
+
+### 02-Implementation-History/ (36 files)
+Complete implementation timeline - every fix, feature, and phase completion documented.
+
+### 03-Architecture/ (9 files)
+System design documents, flow diagrams, and architectural decisions.
+
+### 04-Testing/ (11 files)
+Test protocols, results, and verification guides for all major features.
+
+### 05-Setup-Guides/ (2 files)
+Installation and configuration guides for app setup.
+
+### 06-Reference/ (20 files + subdirs)
+Quick reference guides, SDK documentation, method inventories, and implementation patterns.
+
+**Subdirectories**:
+- `future-implementations/` - Planned features & improvements
+- `main/` - Main app documentation
+
+### 07-Legacy/ (28 files + subdirs)
+Archived historical documents, completed phase docs, and old analysis.
+
+**Subdirectories**:
+- `done-implementation/` - Completed docs (QUICK_START, API_DOCUMENTATION, etc.)
+
+---
+
+## 🚀 Getting Started
+
+### For New Developers (75 min):
+1. Read [README_DOCUMENTATION.md](./00-START-HERE/README_DOCUMENTATION.md) (10 min)
+2. Read [CODE_CHANGES_MASTER_LOG.md](./00-START-HERE/CODE_CHANGES_MASTER_LOG.md) (20 min)
+3. Read [KNOWN_ISSUES_TRACKER.md](./00-START-HERE/KNOWN_ISSUES_TRACKER.md) (15 min)
+4. Skim [03-Architecture/](./03-Architecture/) (30 min)
+
+### For Bug Fixes:
+1. Pick issue from [KNOWN_ISSUES_TRACKER.md](./00-START-HERE/KNOWN_ISSUES_TRACKER.md)
+2. Read related analysis in [01-Analysis/](./01-Analysis/)
+3. Check similar fixes in [02-Implementation-History/](./02-Implementation-History/)
+4. Test using guides in [04-Testing/](./04-Testing/)
+
+### For Performance Work:
+1. Read [PERFORMANCE_OPTIMIZATION_RECOMMENDATIONS.md](./00-START-HERE/PERFORMANCE_OPTIMIZATION_RECOMMENDATIONS.md)
+2. Pick from "Quick Wins" section
+3. Check analysis in [01-Analysis/](./01-Analysis/)
+4. Implement & benchmark
+
+---
+
+## 📊 Documentation Statistics
+
+- **Total Documents**: ~130+ files
+- **Core Strategic**: 5 files (00-START-HERE)
+- **Analysis**: 20 files
+- **Implementation History**: 36 files
+- **Architecture**: 9 files
+- **Testing**: 11 files
+- **Setup**: 2 files
+- **Reference**: 20 files + subdirs
+- **Legacy**: 28 files + subdirs
+
+**Most Important**: 5 files in [00-START-HERE/](./00-START-HERE/) (~1,800 lines total)
+
+---
+
+## ✅ Version History
+
+**Documentation Version**: 2.0  
+**Last Major Reorganization**: Feb 16, 2026  
+**Previous Structure**: Flat directory (130+ files in root)  
+**Current Structure**: 8 organized categories
+
+**Change Log**:
+- v2.0 (Feb 16, 2026): Major reorganization into categories
+- v1.0 (Feb 15, 2026): Created strategic documentation set
+
+---
 
 ## Development Process
 

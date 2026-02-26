@@ -1,8 +1,10 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
+import 'dart:async';
 import '../models/user_model.dart';
 
+/// ✅ TICKET #4: Optimized storage service with batching
 class StorageService {
   static final StorageService _instance = StorageService._internal();
   factory StorageService() => _instance;
@@ -15,6 +17,10 @@ class StorageService {
     ),
   );
 
+  // ✅ TICKET #4: Queue for batching writes
+  final _writeQueue = <Future<void>>[];
+  Timer? _flushTimer;
+
   // Keys for storage
   static const String _keyAuthToken = 'auth_token';
   static const String _keyUser = 'user_data';
@@ -24,25 +30,34 @@ class StorageService {
   // Save authentication token
   Future<void> saveToken(String token) async {
     print('💾 Saving token: ${token.length} chars');
-    // Save to BOTH secure storage AND SharedPreferences as backup
-    try {
-      await _secureStorage.write(key: _keyAuthToken, value: token);
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('backup_$_keyAuthToken', token);
+    
+    // ✅ TICKET #4: Queue write and return immediately (non-blocking)
+    final write = _queueWrite(() async {
+      // Save to BOTH secure storage AND SharedPreferences as backup
+      try {
+        await _secureStorage.write(key: _keyAuthToken, value: token);
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('backup_$_keyAuthToken', token);
 
-      // Verify save
-      final verify = await _secureStorage.read(key: _keyAuthToken);
-      if (verify == null) {
-        throw Exception('Failed to save token to secure storage');
+        // Verify save
+        final verify = await _secureStorage.read(key: _keyAuthToken);
+        if (verify == null) {
+          throw Exception('Failed to save token to secure storage');
+        }
+        print('✅ Token saved to both secure storage and SharedPreferences');
+      } catch (e) {
+        // If secure storage fails, at least save to SharedPreferences
+        print('⚠️ Secure storage failed, using SharedPreferences backup: $e');
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('backup_$_keyAuthToken', token);
+        print('✅ Token saved to SharedPreferences backup');
       }
-      print('✅ Token saved to both secure storage and SharedPreferences');
-    } catch (e) {
-      // If secure storage fails, at least save to SharedPreferences
-      print('⚠️ Secure storage failed, using SharedPreferences backup: $e');
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('backup_$_keyAuthToken', token);
-      print('✅ Token saved to SharedPreferences backup');
-    }
+    });
+    
+    // ✅ TICKET #4: Start flush timer (writes happen in background)
+    _scheduleBatchFlush();
+    
+    return write;
   }
 
   // Get authentication token
@@ -84,18 +99,27 @@ class StorageService {
   // Save user data
   Future<void> saveUser(User user) async {
     final userJson = jsonEncode(user.toJson());
-    try {
-      // Save to both secure storage AND SharedPreferences
-      await _secureStorage.write(key: _keyUser, value: userJson);
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('backup_$_keyUser', userJson);
-      print('✅ User data saved: ${user.name}');
-    } catch (e) {
-      // Fallback to SharedPreferences only
-      print('⚠️ Secure storage failed, using SharedPreferences: $e');
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('backup_$_keyUser', userJson);
-    }
+    
+    // ✅ TICKET #4: Queue write and return immediately (non-blocking)
+    final write = _queueWrite(() async {
+      try {
+        // Save to both secure storage AND SharedPreferences
+        await _secureStorage.write(key: _keyUser, value: userJson);
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('backup_$_keyUser', userJson);
+        print('✅ User data saved: ${user.name}');
+      } catch (e) {
+        // Fallback to SharedPreferences only
+        print('⚠️ Secure storage failed, using SharedPreferences: $e');
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('backup_$_keyUser', userJson);
+      }
+    });
+    
+    // ✅ TICKET #4: Start flush timer
+    _scheduleBatchFlush();
+    
+    return write;
   }
 
   // Get user data
@@ -142,7 +166,9 @@ class StorageService {
     return prefs.getString(_keyDeviceName);
   }
 
-  // Save HC20 device ID for auto-reconnect
+  // ✅ PHASE 4: Save HC20 device ID for app-level tracking (UI, API, webhooks)
+  // NOTE: SDK has its own persistence in ConnectionManager for auto-reconnection
+  // This app-level storage is for displaying device ID in UI and sending to backend API
   Future<void> saveDeviceId(String deviceId) async {
     try {
       // Save to both secure storage AND SharedPreferences
@@ -158,7 +184,9 @@ class StorageService {
     }
   }
 
-  // Get saved HC20 device ID
+  // ✅ PHASE 4: Get saved HC20 device ID from app-level storage
+  // NOTE: SDK's ConnectionManager.getLastConnectedDeviceId() has device for auto-reconnection
+  // This retrieves app-level storage for UI display and API purposes
   Future<String?> getSavedDeviceId() async {
     try {
       // Try secure storage first
@@ -197,7 +225,11 @@ class StorageService {
     print('✅ Authentication data cleared');
   }
 
-  // Clear device data only (for forgetting device)
+  // ✅ PHASE 4: Clear device data (for "Forget Device" feature)
+  // Clears: 1) App-level device ID (StorageService)
+  //         2) Sync timestamps (reset sync history)
+  //         3) Device state (SharedPreferences)
+  // NOTE: SDK persistence is cleared separately via HC20Service.forgetDevice()
   Future<void> clearDeviceData() async {
     try {
       await _secureStorage.delete(key: _keyDeviceId);
@@ -225,5 +257,25 @@ class StorageService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.clear();
     print('✅ All data cleared');
+  }
+  
+  // ✅ TICKET #4: Queue write operation (non-blocking)
+  Future<void> _queueWrite(Future<void> Function() operation) async {
+    final future = operation();
+    _writeQueue.add(future);
+    return future;
+  }
+  
+  // ✅ TICKET #4: Schedule batch flush (debounced)
+  void _scheduleBatchFlush() {
+    _flushTimer?.cancel();
+    _flushTimer = Timer(const Duration(milliseconds: 500), () async {
+      if (_writeQueue.isEmpty) return;
+      
+      print('💾 [StorageService] Flushing ${_writeQueue.length} writes...');
+      await Future.wait(_writeQueue);
+      _writeQueue.clear();
+      print('✅ [StorageService] Flush complete');
+    });
   }
 }

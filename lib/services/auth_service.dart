@@ -2,10 +2,18 @@ import 'package:flutter/foundation.dart';
 import '../models/user_model.dart';
 import 'api_service.dart';
 import 'storage_service.dart';
+import 'enhanced_oauth_service.dart'; // ✅ OAuth Optimization
 
 class AuthService with ChangeNotifier {
   final ApiService _apiService = ApiService();
   final StorageService _storage = StorageService();
+  
+  // ✅ OAuth Optimization: Enhanced OAuth service instance
+  final EnhancedOAuthService _enhancedOAuth = EnhancedOAuthService(
+    clientId: 'Ep8FyjJ1BrvFdW2DdYgQJhX8lM4Gy5j1',
+    clientSecret: 'ac8c34f2c30466954c4da4c995885107fabc33d8',
+    authUrl: 'https://oauth.dtnext.online/hc20/v1/oauth/token',
+  );
 
   User? _currentUser;
   bool _isAuthenticated = false;
@@ -153,6 +161,10 @@ class AuthService with ChangeNotifier {
     try {
       _setLoading(true);
       
+      // ✅ OAuth Optimization: Clear OAuth token on logout
+      await _enhancedOAuth.clearToken(reason: ClearReason.logout);
+      print('✅ [OAuth] Token cleared on logout');
+      
       await _apiService.logout();
       
       _currentUser = null;
@@ -163,7 +175,12 @@ class AuthService with ChangeNotifier {
       notifyListeners();
     } catch (e) {
       print('❌ Logout error: $e');
-      // Still clear local state
+      // Still clear local state and OAuth token
+      try {
+        await _enhancedOAuth.clearToken(reason: ClearReason.logout);
+      } catch (oauthError) {
+        print('⚠️ Failed to clear OAuth token: $oauthError');
+      }
       _currentUser = null;
       _isAuthenticated = false;
       notifyListeners();

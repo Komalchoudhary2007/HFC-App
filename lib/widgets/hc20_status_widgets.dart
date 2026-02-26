@@ -573,18 +573,146 @@ class LowBatteryWarning extends StatelessWidget {
   }
 }
 
+// ==================== DISCONNECT REASON ENUM ====================
+enum DisconnectReason {
+  deviceOffline,       // HC20 not connected (default)
+  bluetoothOff,        // User turned BT off
+  oauthServerDown,     // OAuth server unreachable
+  networkError,        // General network issue
+}
+
 // ==================== MANUAL RECONNECT BUTTON ====================
 class ManualReconnectButton extends StatelessWidget {
   final VoidCallback onPressed;
   final bool isReconnecting;
   final int? minutesUntilAutoReconnect;
-  const ManualReconnectButton({super.key, required this.onPressed, this.isReconnecting = false, this.minutesUntilAutoReconnect});
+  final DisconnectReason reason;
+  
+  const ManualReconnectButton({
+    super.key, 
+    required this.onPressed, 
+    this.isReconnecting = false, 
+    this.minutesUntilAutoReconnect,
+    this.reason = DisconnectReason.deviceOffline, // Default
+  });
 
-  String _getInfoText() {
-    if (minutesUntilAutoReconnect != null && minutesUntilAutoReconnect! > 0) {
-      return 'Auto-reconnect in $minutesUntilAutoReconnect min. Tap below to manually reconnect. If taking too long, close and reopen the app.';
+  // Smart title based on reason
+  String _getTitle() {
+    switch (reason) {
+      case DisconnectReason.deviceOffline:
+        return 'Device Offline';
+      case DisconnectReason.bluetoothOff:
+        return 'Bluetooth OFF';
+      case DisconnectReason.oauthServerDown:
+        return 'Server Issue';
+      case DisconnectReason.networkError:
+        return 'No Network';
     }
-    return 'Auto-reconnect soon. Tap below to manually reconnect. If taking too long, close and reopen the app.';
+  }
+
+  // Smart subtitle based on reason
+  String _getSubtitle() {
+    switch (reason) {
+      case DisconnectReason.deviceOffline:
+        return 'HC20 connection lost';
+      case DisconnectReason.bluetoothOff:
+        return 'Turn on Bluetooth to reconnect';
+      case DisconnectReason.oauthServerDown:
+        return 'Authentication server temporarily offline';
+      case DisconnectReason.networkError:
+        return 'Check your internet connection';
+    }
+  }
+
+  // Smart icon based on reason
+  IconData _getIcon() {
+    switch (reason) {
+      case DisconnectReason.deviceOffline:
+        return Icons.bluetooth_disabled_rounded;
+      case DisconnectReason.bluetoothOff:
+        return Icons.bluetooth_disabled_rounded;
+      case DisconnectReason.oauthServerDown:
+        return Icons.cloud_off_rounded;
+      case DisconnectReason.networkError:
+        return Icons.wifi_off_rounded;
+    }
+  }
+
+  // Smart accent color based on reason
+  Color _getAccentColor() {
+    switch (reason) {
+      case DisconnectReason.deviceOffline:
+      case DisconnectReason.bluetoothOff:
+        return Colors.orange.shade300;
+      case DisconnectReason.oauthServerDown:
+        return Colors.blue.shade300;
+      case DisconnectReason.networkError:
+        return Colors.cyan.shade300;
+    }
+  }
+
+  // Smart status badge based on reason
+  String _getStatusBadge() {
+    switch (reason) {
+      case DisconnectReason.deviceOffline:
+        return 'OFFLINE';
+      case DisconnectReason.bluetoothOff:
+        return 'BT OFF';
+      case DisconnectReason.oauthServerDown:
+        return 'SERVER';
+      case DisconnectReason.networkError:
+        return 'INTERNET';
+    }
+  }
+
+  // Smart button icon based on reason
+  IconData _getButtonIcon() {
+    if (isReconnecting) return Icons.sync_rounded;
+    switch (reason) {
+      case DisconnectReason.deviceOffline:
+      case DisconnectReason.bluetoothOff:
+        return Icons.sync_rounded;
+      case DisconnectReason.oauthServerDown:
+      case DisconnectReason.networkError:
+        return Icons.refresh_rounded;
+    }
+  }
+
+  // Smart button text based on reason
+  String _getButtonText() {
+    if (isReconnecting) {
+      return reason == DisconnectReason.oauthServerDown 
+          ? 'Retrying authentication...' 
+          : 'Searching for device...';
+    }
+    
+    return reason == DisconnectReason.oauthServerDown || reason == DisconnectReason.networkError
+        ? 'Retry Connection'
+        : 'Reconnect Now';
+  }
+
+  // Smart info text based on reason
+  String _getInfoText() {
+    switch (reason) {
+      case DisconnectReason.deviceOffline:
+        if (minutesUntilAutoReconnect != null && minutesUntilAutoReconnect! > 0) {
+          return 'Auto-reconnect in $minutesUntilAutoReconnect min. Tap below to manually reconnect. If taking too long, close and reopen the app.';
+        }
+        return 'Auto-reconnect soon. Tap below to manually reconnect. If taking too long, close and reopen the app.';
+        
+      case DisconnectReason.bluetoothOff:
+        return 'Please turn on Bluetooth from your phone settings to reconnect. '
+               'Once Bluetooth is enabled, the app will automatically reconnect to your HC20 device.';
+        
+      case DisconnectReason.oauthServerDown:
+        return 'The authentication server (oauth.dtnext.online) is temporarily unreachable. '
+               'This is usually temporary. App will retry automatically. '
+               'You can tap below to retry manually or wait for auto-retry.';
+        
+      case DisconnectReason.networkError:
+        return 'Cannot reach HFC servers. Check your WiFi/mobile data connection. '
+               'App will retry automatically when connection is restored.';
+    }
   }
 
   @override
@@ -661,20 +789,20 @@ class ManualReconnectButton extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    // Animated disconnected icon
+                    // Animated disconnected icon (dynamic)
                     Container(
                       padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(
                         color: Colors.white.withOpacity(0.15),
                         borderRadius: BorderRadius.circular(16),
                         border: Border.all(
-                          color: Colors.orange.shade300.withOpacity(0.5),
+                          color: _getAccentColor().withOpacity(0.5),
                           width: 2,
                         ),
                       ),
                       child: Icon(
-                        Icons.bluetooth_disabled_rounded,
-                        color: Colors.orange.shade300,
+                        _getIcon(),
+                        color: _getAccentColor(),
                         size: 32,
                       ),
                     ),
@@ -685,9 +813,9 @@ class ManualReconnectButton extends StatelessWidget {
                         children: [
                           Row(
                             children: [
-                              const Text(
-                                'Device Offline',
-                                style: TextStyle(
+                              Text(
+                                _getTitle(),
+                                style: const TextStyle(
                                   color: Colors.white,
                                   fontWeight: FontWeight.bold,
                                   fontSize: 22,
@@ -698,17 +826,17 @@ class ManualReconnectButton extends StatelessWidget {
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                                 decoration: BoxDecoration(
-                                  color: Colors.orange.shade400.withOpacity(0.9),
+                                  color: _getAccentColor().withOpacity(0.9),
                                   borderRadius: BorderRadius.circular(20),
                                 ),
-                                child: const Row(
+                                child: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    Icon(Icons.circle, color: Colors.white, size: 8),
-                                    SizedBox(width: 5),
+                                    const Icon(Icons.circle, color: Colors.white, size: 8),
+                                    const SizedBox(width: 5),
                                     Text(
-                                      'OFFLINE',
-                                      style: TextStyle(
+                                      _getStatusBadge(),
+                                      style: const TextStyle(
                                         color: Colors.white,
                                         fontWeight: FontWeight.bold,
                                         fontSize: 11,
@@ -722,7 +850,7 @@ class ManualReconnectButton extends StatelessWidget {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            'HC20 connection lost',
+                            _getSubtitle(),
                             style: TextStyle(
                               color: Colors.white.withOpacity(0.8),
                               fontSize: 13,
@@ -810,15 +938,15 @@ class ManualReconnectButton extends StatelessWidget {
                               ),
                             ),
                           ] else ...[
-                            const Icon(
-                              Icons.sync_rounded,
+                            Icon(
+                              _getButtonIcon(),
                               color: Colors.white,
                               size: 22,
                             ),
                           ],
                           const SizedBox(width: 10),
                           Text(
-                            isReconnecting ? 'Searching for device...' : 'Reconnect Now',
+                            _getButtonText(),
                             style: const TextStyle(
                               color: Colors.white,
                               fontWeight: FontWeight.bold,

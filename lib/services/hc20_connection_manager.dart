@@ -225,28 +225,48 @@ class HC20ConnectionManager extends ChangeNotifier {
     }
   }
 
-  /// Forget saved device (unpair for connecting new device)
+  /// ✅ FIX #3: Forget saved device - ONLY place where device reference is cleared
+  /// This is the ONLY method that should clear _connectedDevice and _savedDeviceId
   Future<void> forgetDevice() async {
     try {
+      print('🗑️ [Manager] User requested to forget device');
+      
       // First disconnect if currently connected
       if (_connectedDevice != null) {
-        print('🔌 [Manager] Disconnecting before forgetting device...');
+        print('🔌 [Manager] Disconnecting from: ${_connectedDevice!.name}');
         await disconnect();
       }
 
-      // Clear from storage (also clears sync timestamps)
-      await StorageService().clearDeviceData();
-
-      // Clear local state
-      _savedDeviceId = null;
+      // Clear in-memory device references
       _connectedDevice = null;
+      _savedDeviceId = null;
+      print('✅ [Manager] In-memory device references cleared');
+
+      // Clear ALL SharedPreferences keys related to device
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('hc20_last_connected_device_id');
+      await prefs.remove('hc20_last_connected_device_name');
+      await prefs.remove('last_device_id');
+      await prefs.remove('last_device_name');
+      await prefs.remove('saved_device_id');
+      await prefs.remove('last_connected_device_id');
+      await prefs.remove('last_connected_device_name');
+      await prefs.setBool('device_connected', false);
+      print('✅ [Manager] SharedPreferences device keys cleared');
+
+      // Clear app-level storage (also clears sync timestamps)
+      await StorageService().clearDeviceData();
+      print('✅ [Manager] StorageService device data cleared');
+
+      // Update connection state
       _connectionState = HC20ConnectionState.disconnected;
       _statusMessage = 'Device forgotten. Ready to connect new device.';
 
       // Notify callback to reset sync timestamps in UI
       await _callbacks?.onDeviceForgotten?.call();
 
-      print('🗑️ [Manager] Device forgotten successfully');
+      print('✅ [Manager] Device forgotten completely');
+      print('📌 [Manager] Device will only be cleared by this method or app uninstall');
       notifyListeners();
     } catch (e) {
       print('⚠️ [Manager] Error forgetting device: $e');
@@ -432,6 +452,15 @@ class HC20ConnectionManager extends ChangeNotifier {
         },
       );
       print('✅ [Manager] BLE connection established');
+      
+      // ✅ FIX #2: Log SDK internal state after BLE connection
+      print('🔍 [SDK Debug] Connection state check:');
+      print('   - Client initialized: ${_client != null}');
+      print('   - Device ID: ${device.id}');
+      print('   - Device name: ${device.name}');
+      print('   - Connection state: $_connectionState');
+      print('   - Auto-reconnecting: $_isAutoReconnecting');
+      print('   - Reconnect attempts: $_reconnectAttempts');
 
       // ===== 2. Read Device Info =====
       String deviceDisplayName = device.name;
@@ -502,9 +531,10 @@ class HC20ConnectionManager extends ChangeNotifier {
       // ===== 11. Start Background Services (via callback) =====
       await _callbacks?.onStartBackgroundServices?.call(device, userPhone);
 
-      // ===== 12. Start WorkManager for Background Sync =====
-      await BackgroundSyncService.startPeriodicSync();
-      print('✅ [Manager] WorkManager periodic sync started');
+      // ===== 12. WorkManager DISABLED (Phase 1) =====
+      // SDK handles auto-reconnection, no need for WorkManager
+      // await BackgroundSyncService.startPeriodicSync();
+      print('⏸️  [Manager] WorkManager DISABLED - SDK handles reconnection');
 
       print('✅ [Manager] Connection complete!');
       return true;
@@ -790,8 +820,8 @@ class HC20ConnectionManager extends ChangeNotifier {
 
       // 3. Clear device reference
       if (_connectedDevice != null) {
-        print('🗑️ [Manager] Clearing device reference to prevent stale state');
-        _connectedDevice = null;
+        print('📌 [Manager] Keeping device reference for future reconnection: ${_connectedDevice!.name}');
+        // DON'T clear - only clear on explicit "Forget Device" or app uninstall
       }
 
       // 4. Dispose client (critical for GATT cleanup)
