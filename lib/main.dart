@@ -237,9 +237,9 @@ class SyncScheduler {
   final DateTime? Function() getLastHistorySync;
 
   // ✅ PHASE 2: Optimized sync intervals (battery savings)
-  // Realtime: 15→30min, History: 60→120min, Reconnect: removed (SDK handles)
-  static const int realtimeInterval = 30;
-  static const int historyInterval = 120;
+  // Realtime: 15min, History: 360min, Reconnect: removed (SDK handles)
+  static const int realtimeInterval = 15;
+  static const int historyInterval = 360;
 
   final Function onRealtimeSync;
   final Function onHistorySync;
