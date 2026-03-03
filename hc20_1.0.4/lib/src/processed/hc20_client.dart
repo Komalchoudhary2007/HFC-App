@@ -63,7 +63,6 @@ class Hc20Client {
   // This prevents concurrent calls from interfering with each other and causing incomplete Bluetooth packets
   Completer<void>? _historyMutex;
   final List<Completer<void>> _historyQueue = [];
-  int _historyMutexDepth = 0; // Track re-entrancy depth for nested calls
 
   // Sensor disable tracking for history operations
   // These fields track sensor state during historical data retrieval to avoid frequent disable/enable cycles
@@ -574,22 +573,12 @@ class Hc20Client {
   /// Acquire the history mutex to serialize historical data retrieval operations
   /// This ensures only one historical data retrieval happens at a time to prevent
   /// incomplete Bluetooth packets when multiple calls are made concurrently
-  /// Supports re-entrancy: if called from within a method that already holds the mutex,
-  /// it will increment the depth counter instead of queuing
   /// Also handles sensor disable/enable lifecycle: disables sensors when first operation starts
   Future<void> _acquireHistoryMutex({Hc20Device? device}) async {
-    // If we already hold the mutex (re-entrant call), just increment depth
-    if (_historyMutexDepth > 0) {
-      _historyMutexDepth++;
-      Hc20CloudConfig.debugPrint('[HC20Client] History mutex re-entered (depth: $_historyMutexDepth)');
-      return;
-    }
-    
     // If mutex is available, acquire it immediately
     if (_historyMutex == null) {
       _historyMutex = Completer<void>();
       _historyMutex!.complete();
-      _historyMutexDepth = 1;
       Hc20CloudConfig.debugPrint('[HC20Client] History mutex acquired');
       
       // Disable sensors when first operation starts (if device provided and sensors are enabled)
@@ -604,7 +593,6 @@ class Hc20Client {
     _historyQueue.add(completer);
     Hc20CloudConfig.debugPrint('[HC20Client] History mutex busy, queuing operation (queue length: ${_historyQueue.length})');
     await completer.future;
-    _historyMutexDepth = 1;
     Hc20CloudConfig.debugPrint('[HC20Client] History mutex acquired from queue');
     
     // Disable sensors when first operation starts (if device provided and sensors are enabled)
@@ -613,19 +601,9 @@ class Hc20Client {
     }
   }
   
-  /// Release the history mutex and process the next queued operation
-  /// Supports re-entrancy: only releases when depth reaches 0
-  /// Also handles sensor restore: re-enables sensors when all operations complete
+  /// Release the history mutex and process the next queued operation.
+  /// Re-enables sensors only when all queued operations are finished.
   void _releaseHistoryMutex() {
-    // If this is a re-entrant release, just decrement depth
-    if (_historyMutexDepth > 1) {
-      _historyMutexDepth--;
-      Hc20CloudConfig.debugPrint('[HC20Client] History mutex re-entrant release (depth: $_historyMutexDepth)');
-      return;
-    }
-    
-    // Actually release the mutex
-    _historyMutexDepth = 0;
     if (_historyQueue.isEmpty) {
       _historyMutex = null;
       Hc20CloudConfig.debugPrint('[HC20Client] History mutex released (no queued operations)');
@@ -644,8 +622,8 @@ class Hc20Client {
     }
   }
 
-  /// Disable sensors when starting historical data operations
-  /// This is called once when the first operation starts (mutex depth goes from 0 to 1)
+  /// Disable sensors when starting historical data operations.
+  /// This is called once when the first operation starts.
   Future<void> _disableSensorsForHistoryOperations(Hc20Device d) async {
     if (_sensorsDisabledForHistory) {
       // Already disabled, just update device reference
@@ -2079,20 +2057,38 @@ class Hc20Client {
     await _acquireHistoryMutex(device: d);
     
     try {
-      final msg = await _readHistoryMessage(d,
-          dataType: 0xFD,
-          yy: yy,
-          mm: mm,
-          dd: dd,
-          index: 0,
-          requestedType: dataType);
-      final rd = msg.data;
-      if (rd.length <= 5) return const [];
-      return rd.sublist(5); // one byte per packet index (1-based)
+      return await _readPacketStatusesUnlocked(
+        d,
+        dataType: dataType,
+        yy: yy,
+        mm: mm,
+        dd: dd,
+      );
     } finally {
       // Always release mutex, even if operation fails
       _releaseHistoryMutex();
     }
+  }
+
+  Future<List<int>> _readPacketStatusesUnlocked(
+    Hc20Device d, {
+    required int dataType,
+    required int yy,
+    required int mm,
+    required int dd,
+  }) async {
+    final msg = await _readHistoryMessage(
+      d,
+      dataType: 0xFD,
+      yy: yy,
+      mm: mm,
+      dd: dd,
+      index: 0,
+      requestedType: dataType,
+    );
+    final rd = msg.data;
+    if (rd.length <= 5) return const [];
+    return rd.sublist(5); // one byte per packet index (1-based)
   }
 
   Future<List<_HistoryPacket>> _readAllHistoryPackets(Hc20Device d,
@@ -2102,8 +2098,13 @@ class Hc20Client {
       required int dd}) async {
     final packets = <_HistoryPacket>[];
     try {
-      final statuses = await readPacketStatuses(d,
-          dataType: dataType, yy: yy, mm: mm, dd: dd);
+      final statuses = await _readPacketStatusesUnlocked(
+        d,
+        dataType: dataType,
+        yy: yy,
+        mm: mm,
+        dd: dd,
+      );
       Hc20CloudConfig.debugPrint('HC20 DEBUG: _readAllHistoryPackets type=0x${dataType.toRadixString(16)} statusesLen=${statuses.length}');
       if (statuses.isNotEmpty) {
         int fetchedCount = 0;

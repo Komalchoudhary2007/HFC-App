@@ -94,7 +94,7 @@ class HttpRawDataUploader implements RawDataUploader {
         if (error.response?.statusCode == 401 && !_isRefreshing) {
           _isRefreshing = true;
           try {
-            _authService.clearToken();
+            await _authService.clearToken();
             final token = await _authService.getAccessToken();
             
             // Retry the request with new token

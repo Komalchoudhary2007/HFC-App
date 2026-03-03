@@ -18,6 +18,8 @@ class Hc20Transport implements IHc20Transport {
   final _streams = <String, StreamSubscription<List<int>>>{};
   final _controllers = <String, StreamController<Hc20Frame>>{};
   final _parsedControllers = <String, StreamController<Hc20Message>>{};
+  final _requestQueueTail = <String, Future<void>>{};
+  static const Duration _requestTimeout = Duration(seconds: 30);
 
   Hc20Transport(this.ble);
 
@@ -106,30 +108,93 @@ class Hc20Transport implements IHc20Transport {
 
   @override
   Future<Hc20Frame> request(String deviceId, int func, List<int> payload) async {
-    final bytes = Hc20Codec.encode(func, payload);
-    final respCode = (func | 0x80) & 0xFF;
+    return _enqueueRequest(deviceId, () async {
+      final bytes = Hc20Codec.encode(func, payload);
+      final respCode = (func | 0x80) & 0xFF;
+      final completer = Completer<Hc20Frame>();
+      late StreamSubscription sub;
+      Timer? timeoutTimer;
 
-    final completer = Completer<Hc20Frame>();
-    late StreamSubscription sub;
-    sub = notifications(deviceId).where((f) => f.func == respCode || (f.func & 0x40) != 0).listen((f) {
-      if ((f.func & 0x40) != 0) {
-        final jsonStart = f.payload.indexWhere((b) => b == 0x7B);
-        final jsonEnd = f.payload.lastIndexWhere((b) => b == 0x7D);
-        final jsonStr = (jsonStart >= 0 && jsonEnd > jsonStart)
-            ? utf8.decode(f.payload.sublist(jsonStart, jsonEnd + 1))
-            : '{"code":192,"msg":"exception"}';
-        final map = json.decode(jsonStr) as Map<String, dynamic>;
-        sub.cancel();
-        completer.completeError(Hc20Exception(map['code'] ?? 0xC0, map['msg']?.toString() ?? 'exception'));
-        return;
+      void completeWithError(Object error, [StackTrace? stackTrace]) {
+        timeoutTimer?.cancel();
+        unawaited(sub.cancel());
+        if (!completer.isCompleted) {
+          completer.completeError(error, stackTrace);
+        }
       }
-      if (f.func == respCode) {
-        sub.cancel();
-        completer.complete(f);
+
+      sub = notifications(deviceId)
+          .where((f) => f.func == respCode || (f.func & 0x40) != 0)
+          .listen((f) {
+        if ((f.func & 0x40) != 0) {
+          final jsonStart = f.payload.indexWhere((b) => b == 0x7B);
+          final jsonEnd = f.payload.lastIndexWhere((b) => b == 0x7D);
+          final jsonStr = (jsonStart >= 0 && jsonEnd > jsonStart)
+              ? utf8.decode(f.payload.sublist(jsonStart, jsonEnd + 1))
+              : '{"code":192,"msg":"exception"}';
+          final map = json.decode(jsonStr) as Map<String, dynamic>;
+          completeWithError(
+            Hc20Exception(map['code'] ?? 0xC0, map['msg']?.toString() ?? 'exception'),
+          );
+          return;
+        }
+        if (f.func == respCode) {
+          timeoutTimer?.cancel();
+          unawaited(sub.cancel());
+          if (!completer.isCompleted) {
+            completer.complete(f);
+          }
+        }
+      }, onError: (Object e, StackTrace st) {
+        completeWithError(e, st);
+      });
+
+      timeoutTimer = Timer(_requestTimeout, () {
+        completeWithError(
+          Hc20Exception(
+            0xC0,
+            'Request timeout for func=0x${func.toRadixString(16)}',
+          ),
+        );
+      });
+
+      try {
+        await ble
+            .write(deviceId, ble.ids.serviceFff0, ble.ids.charFff2, bytes)
+            .timeout(
+              _requestTimeout,
+              onTimeout: () => throw Hc20Exception(
+                0xC0,
+                'Write timeout for func=0x${func.toRadixString(16)}',
+              ),
+            );
+      } catch (e, st) {
+        completeWithError(e, st);
       }
+
+      return completer.future;
     });
-    await ble.write(deviceId, ble.ids.serviceFff0, ble.ids.charFff2, bytes);
-    return completer.future;
+  }
+
+  Future<T> _enqueueRequest<T>(
+    String deviceId,
+    Future<T> Function() action,
+  ) async {
+    final previous = _requestQueueTail[deviceId] ?? Future<void>.value();
+    final gate = Completer<void>();
+    _requestQueueTail[deviceId] = gate.future;
+
+    try {
+      await previous.catchError((_) {});
+      return await action();
+    } finally {
+      if (!gate.isCompleted) {
+        gate.complete();
+      }
+      if (identical(_requestQueueTail[deviceId], gate.future)) {
+        _requestQueueTail.remove(deviceId);
+      }
+    }
   }
 
   @override
@@ -139,6 +204,7 @@ class Hc20Transport implements IHc20Transport {
     for (final c in _parsedControllers.values) { await c.close(); }
     _streams.clear(); _controllers.clear();
     _parsedControllers.clear();
+    _requestQueueTail.clear();
   }
 }
 
