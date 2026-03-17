@@ -9,7 +9,7 @@ class Hc20CloudConfig {
   static bool isDevelopment = false;
   
   /// Base URL for the HC20 wearable API (production)
-  static const String _productionBaseUrl = 'http://out-licensing.zensorium-labs.com/api/v1/hc20-wearable-api';
+  static const String _productionBaseUrl = 'https://out-licensing.zensorium-labs.com/api/v1/hc20-wearable-api';
   
   /// Base URL for the HC20 wearable API (development)
   static const String _developmentBaseUrl = 'http://out-licensing-dev.zensorium-labs.com/api/v1/hc20-wearable-api';
