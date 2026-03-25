@@ -155,7 +155,7 @@ class HC20Service extends ChangeNotifier {
       
       _client = await Hc20Client.create(
         config: Hc20Config(
-          clientId: 'Ep8FyjJ1BrvFdW2DdYgQJhX8lM4Gy5j1',
+          clientId: '0f3a3a9d342cd0b17859',
           clientSecret: 'ac8c34f2c30466954c4da4c995885107fabc33d8',
         ),
       ).timeout(
