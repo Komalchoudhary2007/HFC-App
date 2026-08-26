@@ -1,5 +1,6 @@
 import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 /// Service that uses AlarmManager to ensure app stays alive or auto-restarts
@@ -11,6 +12,10 @@ class AppKeepaliveService {
   
   /// Initialize the alarm manager
   static Future<void> initialize() async {
+    if (kIsWeb) {
+      print('⚠️ [AppKeepalive] Skipping AlarmManager init on web');
+      return;
+    }
     try {
       await AndroidAlarmManager.initialize();
       print('✅ [AppKeepalive] AlarmManager initialized');

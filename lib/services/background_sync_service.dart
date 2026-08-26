@@ -1,5 +1,6 @@
 import 'package:workmanager/workmanager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 // Background task callback - runs in isolate (separate from main app)
@@ -139,6 +140,10 @@ class BackgroundSyncService {
   
   // Cancel all background tasks
   static Future<void> cancelAll() async {
+    if (kIsWeb) {
+      print('⏹️ [BackgroundSync] Skipping cancelAll on web');
+      return;
+    }
     await Workmanager().cancelAll();
     print('⏹️ [BackgroundSync] All background tasks cancelled');
   }

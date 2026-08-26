@@ -293,7 +293,9 @@ please check getAllDaySleepRows logic in documentation (README.md) and check in 
 if posible minimise the app when alarm open relaunch the app
 so please fix it without impact on core working functionalties as working fine 
 
+
 ------
+
 
 heartbeat can be very aggressive every 30 seconds so implement Dynamic alarm as per below
  IF device CONNECTED: 
@@ -318,9 +320,28 @@ for the download report buttone press, can we design a morden ui / ux pdf or ima
 
 For now can we do below implement to solutions OAuth issue
 1. Refresh token 15 min before expiry
-2. store token on disk use the same in cashe if not expire (less then 1 hour), although you know better way to implement for fast and smooth reconnect
+2. store token on disk use the same in cashe if not expire (less then 1 hour), although you know better way to implement for fast and smooth reconnect   
 3. ✅ Clear on: Logout, 401 errors (invalid credentials)
 4. ❌ Don't clear on: 500 errors, network timeout, app background, device disconnect
 
-New instraction
+New instraction     
 before any code change or remove check previous chat that have we implemented this code previously for a reason to fix any issue 
+
+
+
+# stop previously running web port before we run
+kill -9 $(lsof -t -i:8080) 2>/dev/null && echo "Stopped" || echo "Nothing running on 8080"
+ 
+# run the web app
+export PATH="/opt/flutter/bin:$PATH" && flutter run -d web-server --web-port=8080 --web-hostname=0.0.0.0
+
+# Build serve
+cd /workspaces/HFC-App/build/web && python3 -m http.server 8080
+
+# rebuild after code changes
+kill -9 $(lsof -t -i:8080) 2>/dev/null
+export PATH="/opt/flutter/bin:$PATH" && flutter build web --no-tree-shake-icons
+cd /workspaces/HFC-App/build/web && python3 -m http.server 8080 
+     
+
+  

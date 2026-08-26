@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
 import 'package:meta/meta.dart';
 import '../raw/config.dart';
@@ -34,17 +35,8 @@ class Hc20BleAdapter {
   Stream<DiscoveredDevice> scan({required bool allowDuplicates}) {
     // On Android 12+ (API 31+), location is not required when using BLUETOOTH_SCAN with neverForLocation flag
     // On older Android versions and iOS, location services are required for BLE scanning
-    final bool requireLocation = Platform.isAndroid 
-        ? false  // Android 12+ uses BLUETOOTH_SCAN with neverForLocation, older versions still need location but we handle it via permissions
-        : true;  // iOS requires location services for BLE scanning
-    
-    // Scan without service UUIDs on both platforms - devices may advertise manufacturer data
-    // but not always include service UUIDs in scan response
-    // Android: Use balanced or lowLatency mode depending on requirements
-    // iOS: Use lowLatency for faster detection
-    final ScanMode scanMode = Platform.isAndroid 
-        ? ScanMode.lowLatency  // Low latency helps Android discover devices faster
-        : ScanMode.lowLatency;
+    final bool requireLocation = (!kIsWeb && Platform.isAndroid) ? false : true;
+    final ScanMode scanMode = ScanMode.lowLatency;
     
     return _ble
         .scanForDevices(
@@ -60,7 +52,7 @@ class Hc20BleAdapter {
           final hasManufacturerData = _isHc20Adv(d.manufacturerData);
           
           // Debug logging for Android
-          if (Platform.isAndroid) {
+          if (!kIsWeb && Platform.isAndroid) {
             final mfrHex = d.manufacturerData.isEmpty 
                 ? 'empty' 
                 : d.manufacturerData.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
@@ -71,7 +63,7 @@ class Hc20BleAdapter {
           // Accept if either manufacturer data matches OR service UUID matches
           // This handles cases where Android might parse manufacturer data differently
           // TEMPORARY: On Android, also check device name as fallback (remove after testing)
-          if (Platform.isAndroid && !hasManufacturerData && !hasService) {
+          if (!kIsWeb && Platform.isAndroid && !hasManufacturerData && !hasService) {
             // Check if device name contains HC20 or similar patterns (temporary debugging)
             final name = d.name.toLowerCase();
             if (name.contains('B20') || name.contains('hc-20')) {

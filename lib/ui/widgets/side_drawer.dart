@@ -3,6 +3,11 @@ import '../../core/constants/app_colors.dart';
 import '../../core/constants/app_text_styles.dart';
 import '../../core/constants/app_dimensions.dart';
 import '../../services/auth_service.dart';
+import '../screens/video_library_screen.dart';
+import '../screens/early_screening_report_screen.dart';
+import '../screens/assessment_report_screen.dart';
+import '../screens/therapy_plan_screen.dart';
+import '../screens/progress_report_screen.dart';
 import 'package:provider/provider.dart';
 
 /// SideDrawer (formerly AppDrawer) - Navigation drawer with user profile and menu items
@@ -101,6 +106,42 @@ class SideDrawer extends StatelessWidget {
             //   subtitle: 'Vital signs',
             // ),
             
+            const Divider(),
+
+            // Patient Pages
+            _buildDrawerPageItem(
+              context,
+              icon: Icons.video_library_rounded,
+              title: 'Video Library',
+              page: const VideoLibraryScreen(),
+            ),
+            _buildDrawerPageItem(
+              context,
+              icon: Icons.child_care_rounded,
+              title: 'Early Screening Reports',
+              page: const EarlyScreeningReportScreen(),
+            ),
+            _buildDrawerPageItem(
+              context,
+              icon: Icons.assignment_outlined,
+              title: 'Assessment Reports',
+              page: const AssessmentReportScreen(),
+            ),
+            _buildDrawerPageItem(
+              context,
+              icon: Icons.calendar_today_outlined,
+              title: 'Therapy Plan',
+              page: const TherapyPlanScreen(),
+            ),
+            _buildDrawerPageItem(
+              context,
+              icon: Icons.trending_up_rounded,
+              title: 'Progress Reports',
+              page: const ProgressReportScreen(),
+            ),
+
+            const Divider(),
+
             _buildDrawerItem(
               context,
               icon: Icons.person,
@@ -127,6 +168,23 @@ class SideDrawer extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+
+  /// Navigates by pushing a new page (for screens outside the main route map)
+  Widget _buildDrawerPageItem(
+    BuildContext context, {
+    required IconData icon,
+    required String title,
+    required Widget page,
+  }) {
+    return ListTile(
+      leading: Icon(icon, color: AppColors.textSecondary, size: AppDimensions.iconL),
+      title: Text(title, style: AppTextStyles.navText),
+      onTap: () {
+        Navigator.pop(context);
+        Navigator.push(context, MaterialPageRoute(builder: (_) => page));
+      },
     );
   }
 

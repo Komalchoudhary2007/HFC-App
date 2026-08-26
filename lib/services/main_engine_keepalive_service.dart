@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 /// Service to keep the main Flutter engine running in the background
@@ -30,7 +31,7 @@ class MainEngineKeepAliveService {
   
   /// Initialize the keep-alive service
   static Future<void> initialize() async {
-    if (!Platform.isAndroid) {
+    if (kIsWeb || !Platform.isAndroid) {
       print('⚠️ MainEngineKeepAlive: Only supported on Android');
       return;
     }
@@ -81,7 +82,7 @@ class MainEngineKeepAliveService {
     double? currentTemperature,
     int? batteryLevel,
   }) async {
-    if (!Platform.isAndroid) return false;
+    if (kIsWeb || !Platform.isAndroid) return false;
     
     if (_isKeepAliveActive) {
       print('ℹ️ [MainEngineKeepAlive] Already active');
@@ -111,7 +112,7 @@ class MainEngineKeepAliveService {
   
   /// Stop keep-alive mode - call this when app comes to foreground
   static Future<bool> stopKeepAlive() async {
-    if (!Platform.isAndroid) return false;
+    if (kIsWeb || !Platform.isAndroid) return false;
     
     if (!_isKeepAliveActive) {
       print('ℹ️ [MainEngineKeepAlive] Already stopped');
@@ -143,7 +144,7 @@ class MainEngineKeepAliveService {
     int? steps,
     List<int>? bloodPressure,
   }) async {
-    if (!Platform.isAndroid || !_isKeepAliveActive) return;
+    if (kIsWeb || !Platform.isAndroid || !_isKeepAliveActive) return;
     
     try {
       await _channel.invokeMethod('updateHealthData', {
@@ -174,7 +175,7 @@ class MainEngineKeepAliveService {
   
   /// Check if app should stay alive (connected to HC20)
   static Future<bool> shouldKeepAlive() async {
-    if (!Platform.isAndroid) return false;
+    if (kIsWeb || !Platform.isAndroid) return false;
     
     try {
       final result = await _channel.invokeMethod<bool>('shouldKeepAlive');

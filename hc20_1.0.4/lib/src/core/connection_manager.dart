@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../raw/config.dart';
@@ -106,9 +107,9 @@ class ConnectionManager {
     
     // On iOS, use longer intervals to reduce battery drain and respect background limitations
     // On Android, shorter intervals are fine
-    final interval = Platform.isIOS 
-        ? const Duration(seconds: 60)  // iOS: 60 seconds to respect background limitations
-        : const Duration(seconds: 30); // Android: 30 seconds
+    final interval = (!kIsWeb && Platform.isIOS)
+        ? const Duration(seconds: 60)
+        : const Duration(seconds: 30);
     
     _periodicReconnectTimer = Timer.periodic(interval, (timer) {
       final lastDeviceId = getLastConnectedDeviceId();

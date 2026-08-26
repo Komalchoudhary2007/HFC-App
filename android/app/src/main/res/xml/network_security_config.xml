@@ -8,5 +8,8 @@
     </base-config>
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="true">api.hireforcare.com</domain>
+        <domain includeSubdomains="true">media.hireforcare.com</domain>
+        <domain includeSubdomains="true">stream.mux.com</domain>
+        <domain includeSubdomains="true">image.mux.com</domain>
     </domain-config>
 </network-security-config>

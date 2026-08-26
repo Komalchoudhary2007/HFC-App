@@ -1,8 +1,8 @@
 import 'dart:async';
-import 'dart:io';
+import 'dart:io' show InternetAddress, Platform;
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/foundation.dart'; // for kDebugMode
 import 'package:hc20/hc20.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
@@ -99,7 +99,7 @@ void main() async {
 
 /// Check and request SCHEDULE_EXACT_ALARM permission on Android 12+
 Future<void> _checkExactAlarmPermission() async {
-  if (!Platform.isAndroid) return;
+  if (kIsWeb || !Platform.isAndroid) return;
   const channel = MethodChannel('com.hfc.app/background');
   try {
     final bool canSchedule =
@@ -126,7 +126,7 @@ Future<void> _checkExactAlarmPermission() async {
 
 /// Test that alarms are actually scheduled
 Future<void> _testAlarmScheduling() async {
-  if (!Platform.isAndroid) return;
+  if (kIsWeb || !Platform.isAndroid) return;
   const channel = MethodChannel('com.hfc.app/background');
   try {
     final Map<dynamic, dynamic> result =
@@ -751,7 +751,7 @@ class _HC20HomePageState extends State<HC20HomePage>
   Future<void> _loadDeviceInfo() async {
     try {
       final DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
-      if (Platform.isAndroid) {
+      if (!kIsWeb && Platform.isAndroid) {
         final AndroidDeviceInfo androidInfo = await deviceInfo.androidInfo;
         setState(() {
           _deviceManufacturer = androidInfo.manufacturer;
@@ -761,7 +761,7 @@ class _HC20HomePageState extends State<HC20HomePage>
         });
         print(
             '📱 Device: ${androidInfo.manufacturer} ${androidInfo.model}, Android ${androidInfo.version.release}');
-      } else if (Platform.isIOS) {
+      } else if (!kIsWeb && Platform.isIOS) {
         final IosDeviceInfo iosInfo = await deviceInfo.iosInfo;
         setState(() {
           _deviceManufacturer = 'Apple';
@@ -777,7 +777,7 @@ class _HC20HomePageState extends State<HC20HomePage>
       setState(() {
         _deviceManufacturer = 'Unknown';
         _deviceModel = 'Unknown';
-        _deviceOsVersion = Platform.isAndroid ? 'Android' : 'iOS';
+        _deviceOsVersion = (!kIsWeb && Platform.isAndroid) ? 'Android' : 'iOS';
         _deviceId = 'unknown';
       });
     }
@@ -807,7 +807,7 @@ class _HC20HomePageState extends State<HC20HomePage>
       });
       print('✅ [Notification Init] Plugin initialized successfully');
       
-      if (Platform.isAndroid) {
+      if (!kIsWeb && Platform.isAndroid) {
         print('🔔 [Notification Init] Requesting Android notification permission...');
         final permissionGranted = await _notificationsPlugin
             .resolvePlatformSpecificImplementation<
